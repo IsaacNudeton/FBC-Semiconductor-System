@@ -1,0 +1,22 @@
+------------------------------------------------------------
+Design Hierarchy Report for HPBIController.PrjPCB
+-- 12/10/2019
+-- 11:36:16 AM
+------------------------------------------------------------
+
+Top                           SCH        (Top.SchDoc)
+    U_ADC                     SCH        (ADC.SchDoc)
+    U_Bank0-13-33             SCH        (Bank0-13-33.SchDoc)
+    U_Bank34-35               SCH        (Bank34-35.SchDoc)
+    U_BlockDiagram            SCH        (BlockDiagram.SchDoc)
+    U_DAC                     SCH        (DAC.SchDoc)
+    U_DDR3A                   SCH        (DDR3A.SchDoc)
+    U_DDR3B                   SCH        (DDR3B.SchDoc)
+    U_Ethernet                SCH        (Ethernet.SchDoc)
+    U_FPGAPower               SCH        (FPGAPower.SchDoc)
+    U_HeaderA                 SCH        (HeaderA.SchDoc)
+    U_HeaderB                 SCH        (HeaderB.SchDoc)
+    U_HeaderC                 SCH        (HeaderC.SchDoc)
+    U_IOPower                 SCH        (IOPower.SchDoc)
+    U_Power                   SCH        (Power.SchDoc)
+    U_QSPIFlash               SCH        (QSPIFlash.SchDoc)

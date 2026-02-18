@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Build artifacts
+target/
+dist/
+build/
+*.exe
+!reference/**/*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets
+.env
+*.key
+*.pem
+api_keys*
+.secrets/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Archives in root
+*.zip
+*.7z
+*.tar.gz
+
+
+# Large data
+reference/kzhang_v2/
+archive/
+build/
+gui/node_modules/
+host/target/
+firmware/target/
+*.bin
+*.BIN
+!reference/scratch/*.BIN
+
+# Tauri build artifacts
+gui/src-tauri/target/
+# Large PCB files
+*.brd

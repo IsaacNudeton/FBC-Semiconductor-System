@@ -1,0 +1,313 @@
+{
+  "$schema": "fbc-test-plan-v1",
+  "name": "Calibration Board Rev B - Full System Test",
+  "description": "Comprehensive test plan for FBC Calibration Board Rev B. Tests all subsystems: GPIO, ADC, DAC, power supplies, thermal control, and communication interfaces. Use this to validate controller hardware before production testing.",
+  "version": "1.0.0",
+  "created": "2026-02-10T00:00:00.000Z",
+
+  "vectors": {
+    "file": "vectors/calibration_board_revB.fbc",
+    "checksum": "",
+    "vector_count": 10000,
+    "compression_ratio": 500
+  },
+
+  "device": {
+    "file": "device-configs/calibration_board_revB.fbcfg",
+    "checksum": "",
+    "part_number": "02292C02-CALIB-REVB",
+    "pin_count": 160
+  },
+
+  "execution": {
+    "loops": 100,
+    "loop_mode": "fixed",
+    "stop_on_error": true,
+    "error_threshold": 1
+  },
+
+  "power": {
+    "sequence": "custom",
+    "rails": [
+      { "id": 0, "name": "VOUT1", "voltage_mv": 1200, "current_limit_ma": 550 },
+      { "id": 1, "name": "VOUT2", "voltage_mv": 1200, "current_limit_ma": 550 },
+      { "id": 2, "name": "VOUT3", "voltage_mv": 1200, "current_limit_ma": 550 },
+      { "id": 3, "name": "VOUT4", "voltage_mv": 1200, "current_limit_ma": 550 },
+      { "id": 4, "name": "VOUT5", "voltage_mv": 1200, "current_limit_ma": 550 },
+      { "id": 5, "name": "VOUT6", "voltage_mv": 1200, "current_limit_ma": 550 },
+      { "id": 6, "name": "VOUT7", "voltage_mv": 1200, "current_limit_ma": 550 },
+      { "id": 7, "name": "VOUT8", "voltage_mv": 1200, "current_limit_ma": 550 }
+    ],
+    "ramp_rate_mv_per_ms": 10
+  },
+
+  "thermal": {
+    "setpoint_c": 25,
+    "tolerance_c": 5,
+    "soak_time_s": 10
+  },
+
+  "timing": {
+    "vector_clock_mhz": 10,
+    "setup_ns": 5,
+    "hold_ns": 5
+  },
+
+  "board_filter": {
+    "mode": "all"
+  },
+
+  "calibration_tests": {
+    "description": "Calibration board specific test sequences",
+
+    "phase_1_power_verification": {
+      "name": "Power Supply Verification",
+      "tests": [
+        {
+          "name": "48V Input Check",
+          "adc_channel": "ADC_IN8",
+          "expected_mv": 2400,
+          "tolerance_pct": 5,
+          "notes": "48V / 20 divider = 2.4V"
+        },
+        {
+          "name": "4.096V Reference",
+          "adc_channel": "AD00_P",
+          "expected_mv": 819,
+          "tolerance_pct": 1,
+          "notes": "4.096V / 5 divider = 0.819V"
+        },
+        {
+          "name": "12V Supply",
+          "adc_channel": "AD01_P",
+          "expected_mv": 600,
+          "tolerance_pct": 5,
+          "notes": "12V / 20 divider = 0.6V"
+        },
+        {
+          "name": "VCCO Bank 13",
+          "adc_channel": "ADC_IN9",
+          "expected_mv": 1800,
+          "tolerance_pct": 5
+        },
+        {
+          "name": "VCCO Bank 33",
+          "adc_channel": "ADC_IN10",
+          "expected_mv": 1800,
+          "tolerance_pct": 5
+        },
+        {
+          "name": "VCCO Bank 34",
+          "adc_channel": "ADC_IN11",
+          "expected_mv": 1800,
+          "tolerance_pct": 5
+        },
+        {
+          "name": "VCCO Bank 35",
+          "adc_channel": "ADC_IN12",
+          "expected_mv": 1800,
+          "tolerance_pct": 5
+        }
+      ]
+    },
+
+    "phase_2_gpio_led_test": {
+      "name": "GPIO to LED Verification",
+      "description": "Toggle each VOUT pin and verify LED response via current sense",
+      "tests": [
+        { "gpio": "VOUT1", "led": "LED1", "load_ohm": 2.2 },
+        { "gpio": "VOUT2", "led": "LED2", "load_ohm": 2.2 },
+        { "gpio": "VOUT3", "led": "LED3", "load_ohm": 2.2 },
+        { "gpio": "VOUT4", "led": "LED4", "load_ohm": 2.2 },
+        { "gpio": "VOUT5", "led": "LED5", "load_ohm": 2.2 },
+        { "gpio": "VOUT6", "led": "LED6", "load_ohm": 2.2 },
+        { "gpio": "VOUT7", "led": "LED7", "load_ohm": 2.2 },
+        { "gpio": "VOUT8", "led": "LED8", "load_ohm": 2.2 }
+      ]
+    },
+
+    "phase_3_dac_adc_loopback": {
+      "name": "DAC to ADC Loopback",
+      "description": "Set DAC outputs, verify via ADC inputs",
+      "tests": [
+        { "dac": "DAC_OUT1", "adc": "AD15_P", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] },
+        { "dac": "DAC_OUT2", "adc": "AD06_P", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] },
+        { "dac": "DAC_OUT3", "adc": "AD07_P", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] },
+        { "dac": "DAC_OUT4", "adc": "AD14_P", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] },
+        { "dac": "DAC_OUT5", "adc": "AD05_P", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] },
+        { "dac": "DAC_OUT6", "adc": "AD04_P", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] },
+        { "dac": "DAC_OUT7", "adc": "AD13_P", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] },
+        { "dac": "DAC_OUT8", "adc": "AD09_P", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] },
+        { "dac": "DAC_OUT9", "adc": "AD12_P", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] },
+        { "dac": "DAC_OUT10", "adc": "ADC_IN14", "test_voltages_mv": [0, 1000, 2000, 3000, 4096] }
+      ],
+      "tolerance_mv": 50
+    },
+
+    "phase_4_gpio_continuity": {
+      "name": "GPIO Pin Continuity",
+      "description": "Walking 1s and 0s pattern across all GPIO banks",
+      "banks": [
+        {
+          "name": "Bank 13",
+          "pins": "GPIO0-47",
+          "connector": "J4a",
+          "pattern": "walking_ones"
+        },
+        {
+          "name": "Bank 33",
+          "pins": "GPIO48-95",
+          "connector": "J4b/J4c",
+          "pattern": "walking_ones"
+        },
+        {
+          "name": "Bank 34",
+          "pins": "GPIO96-127",
+          "connector": "J5a",
+          "pattern": "walking_ones"
+        },
+        {
+          "name": "Bank 35 (Fast)",
+          "pins": "GPIO128-159",
+          "connector": "J5b",
+          "pattern": "walking_ones"
+        }
+      ]
+    },
+
+    "phase_5_thermal_control": {
+      "name": "Thermal Control Verification",
+      "tests": [
+        {
+          "name": "Cooler Switch Test",
+          "signal": "COOLER_SW",
+          "pins": "J3c pins 157-179 (odd)",
+          "action": "toggle_verify"
+        },
+        {
+          "name": "Heater Switch Test",
+          "signal": "HEATER_SW",
+          "pins": "J3c pins 189-192",
+          "action": "toggle_verify"
+        },
+        {
+          "name": "Temperature Diode Read",
+          "signal": "DUT_TEMP_DIODE_J",
+          "pins": "J3a 43-46",
+          "action": "read_verify_range",
+          "expected_c": 25,
+          "tolerance_c": 10
+        },
+        {
+          "name": "NTC Thermistor Read",
+          "signal": "CMP_IN1_NTC",
+          "adc": "ADC_IN15",
+          "action": "read_verify"
+        }
+      ]
+    },
+
+    "phase_6_communication": {
+      "name": "Communication Interface Tests",
+      "tests": [
+        {
+          "name": "I2C0 EEPROM",
+          "interface": "I2C0",
+          "device": "CAT24C02 @ 0x50",
+          "action": "write_read_verify",
+          "test_pattern": "0xA5"
+        },
+        {
+          "name": "I2C1 Bus Scan",
+          "interface": "I2C1",
+          "action": "scan_addresses"
+        },
+        {
+          "name": "SPI0 Loopback",
+          "interface": "SPI0",
+          "pins": "MIO28-33",
+          "action": "loopback_verify"
+        },
+        {
+          "name": "SPI1 Loopback",
+          "interface": "SPI1",
+          "pins": "MIO34-39",
+          "action": "loopback_verify"
+        },
+        {
+          "name": "UART Console",
+          "interface": "UART",
+          "pins": "MIO48-49",
+          "action": "echo_test",
+          "baud": 115200
+        }
+      ]
+    },
+
+    "phase_7_vicor_power": {
+      "name": "VICOR Power Module Tests",
+      "description": "Test high-current power delivery through VICOR modules",
+      "tests": [
+        {
+          "name": "Core 250W Module",
+          "connector": "J8/J9",
+          "adc_voltage": "AD11_P_CORE250W",
+          "adc_current": "AD10_P_130W_I",
+          "test_points": [
+            { "voltage_mv": 900, "load_a": 10 },
+            { "voltage_mv": 1000, "load_a": 20 },
+            { "voltage_mv": 1100, "load_a": 30 }
+          ]
+        },
+        {
+          "name": "Core 130W Module",
+          "connector": "J10",
+          "adc_voltage": "AD03_P_CORE130W",
+          "test_points": [
+            { "voltage_mv": 900, "load_a": 5 },
+            { "voltage_mv": 1000, "load_a": 10 },
+            { "voltage_mv": 1100, "load_a": 15 }
+          ]
+        },
+        {
+          "name": "4-Channel 40A Module",
+          "connector": "J11",
+          "channels": ["VOUT9", "VOUT10", "VOUT11", "VOUT12"],
+          "test_voltage_mv": 1000,
+          "test_current_a": 10
+        }
+      ]
+    },
+
+    "phase_8_current_sense": {
+      "name": "Current Sense Resistor Calibration",
+      "description": "Verify current sense resistors for accurate measurement",
+      "resistors": [
+        { "id": "R58-R77", "value_mohm": 4, "tolerance_pct": 1 },
+        { "id": "R90-R105", "value_mohm": 8, "tolerance_pct": 1 },
+        { "id": "R110-R125", "value_mohm": 25, "tolerance_pct": 1 },
+        { "id": "R128-R145", "value_mohm": 500, "tolerance_pct": 5, "notes": "TKH 45W load resistors" }
+      ]
+    }
+  },
+
+  "pass_criteria": {
+    "all_adc_within_tolerance": true,
+    "all_gpio_functional": true,
+    "all_dac_verified": true,
+    "thermal_control_responsive": true,
+    "communication_interfaces_working": true,
+    "power_rails_stable": true,
+    "no_overcurrent_events": true
+  },
+
+  "notes": [
+    "Calibration Board Rev B (02292C02)",
+    "QSH-090-XX-X-D-A Samtec connectors (180 pins each)",
+    "8x VOUT channels with 2.2 Ohm loads draw ~545mA each at 1.2V",
+    "48V input required for VICOR module tests",
+    "USB-UART via CP2104 for debug console",
+    "CAT24C02 EEPROM stores board calibration data",
+    "TKH load resistors rated for 45W continuous"
+  ]
+}

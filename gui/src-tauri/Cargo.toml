@@ -1,0 +1,51 @@
+[package]
+name = "fbc-gui"
+version = "1.0.0"
+edition = "2021"
+authors = ["ISE Labs"]
+description = "FBC Semiconductor System GUI"
+license = "Proprietary"
+
+[lib]
+name = "fbc_gui_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+winresource = "0.1"
+
+[dependencies]
+# Tauri
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# FBC Protocol (raw Ethernet)
+pnet = "0.35"
+pnet_datalink = "0.35"
+pnet_packet = "0.35"
+byteorder = "1.5"
+
+# Async
+tokio = { version = "1", features = ["full", "sync"] }
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Date/time
+chrono = "0.4"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Serial port for switch communication
+serialport = "4.3"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

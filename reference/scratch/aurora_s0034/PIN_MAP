@@ -1,0 +1,134 @@
+# Aurora S0034 PIN_MAP
+# Maps GPIO bit positions to signal names
+# Generated from SCH#S0034 Rev A (07/13/24)
+# Format: <bit> <signal_name>
+
+# ============================================================================
+# MIO GPIO (directly accessible from ZYNQ PS)
+# ============================================================================
+0 EN_COREPS1
+4 CONSOLE_UART_RX
+5 CONSOLE_UART_TX
+7 DEV_ID0
+8 EN_COREPS2
+9 SMBUS_ALERT_N
+10 DUT_PRESENT_N
+12 I2C1_SCL
+13 I2C1_SDA
+14 DAC_LD
+15 ADC_EOC
+28 SPI0_SCLK
+32 SPI0_SS2
+33 SPI0_MOSI
+34 SPI1_MOSI
+36 SPI1_SCLK
+37 EN_COREPS6
+38 EN_COREPS5
+39 EN_COREPS4
+47 EN_COREPS3
+50 I2C0_SCL
+51 I2C0_SDA
+
+# ============================================================================
+# BANK1 IO Channels (from J4 connector)
+# ============================================================================
+64 BANK1_IO_CHAN_000
+65 BANK1_IO_CHAN_001
+66 BANK1_IO_CHAN_002
+67 BANK1_IO_CHAN_003
+68 BANK1_IO_CHAN_004
+69 BANK1_IO_CHAN_005
+70 BANK1_IO_CHAN_006
+71 BANK1_IO_CHAN_008
+72 BANK1_IO_CHAN_009
+73 BANK1_IO_CHAN_010
+74 BANK1_IO_CHAN_011
+75 BANK1_IO_CHAN_012
+76 BANK1_IO_CHAN_013
+77 BANK1_IO_CHAN_014
+78 BANK1_IO_CHAN_015
+79 BANK1_IO_CHAN_016
+80 BANK1_IO_CHAN_017
+81 BANK1_IO_CHAN_018
+82 BANK1_IO_CHAN_019
+83 BANK1_IO_CHAN_020
+84 BANK1_IO_CHAN_021
+85 BANK1_IO_CHAN_022
+86 BANK1_IO_CHAN_023
+87 BANK1_IO_CHAN_024
+88 BANK1_IO_CHAN_025
+89 BANK1_IO_CHAN_026
+90 BANK1_IO_CHAN_027
+91 BANK1_IO_CHAN_028
+92 BANK1_IO_CHAN_029
+93 BANK1_IO_CHAN_030
+94 BANK1_IO_CHAN_031
+
+# ============================================================================
+# BANK2 IO Channels
+# ============================================================================
+96 BANK2_IO_CHAN_048
+97 BANK2_IO_CHAN_049
+98 BANK2_IO_CHAN_050
+99 BANK2_IO_CHAN_051
+100 BANK2_IO_CHAN_052
+101 BANK2_IO_CHAN_053
+102 BANK2_IO_CHAN_054
+103 BANK2_IO_CHAN_055
+104 BANK2_IO_CHAN_056
+105 BANK2_IO_CHAN_057
+106 BANK2_IO_CHAN_058
+107 BANK2_IO_CHAN_059
+108 BANK2_IO_CHAN_060
+109 BANK2_IO_CHAN_061
+110 BANK2_IO_CHAN_062
+111 BANK2_IO_CHAN_063
+112 BANK2_IO_CHAN_064
+113 BANK2_IO_CHAN_065
+114 BANK2_IO_CHAN_066
+115 BANK2_IO_CHAN_067
+116 BANK2_IO_CHAN_068
+
+# ============================================================================
+# BANK3 IO Channels
+# ============================================================================
+128 BANK3_IO_CHAN_096
+129 BANK3_IO_CHAN_097
+130 BANK3_IO_CHAN_098
+131 BANK3_IO_CHAN_099
+132 BANK3_IO_CHAN_100
+133 BANK3_IO_CHAN_101
+134 BANK3_IO_CHAN_102
+135 BANK3_IO_CHAN_103
+136 BANK3_IO_CHAN_104
+137 BANK3_IO_CHAN_105
+138 BANK3_IO_CHAN_106
+139 BANK3_IO_CHAN_107
+140 BANK3_IO_CHAN_108
+
+# ============================================================================
+# BANK4 IO Channels
+# ============================================================================
+160 BANK4_IO_CHAN_144
+161 BANK4_IO_CHAN_145
+162 BANK4_IO_CHAN_146
+163 BANK4_IO_CHAN_147
+164 BANK4_IO_CHAN_148
+165 BANK4_IO_CHAN_149
+166 BANK4_IO_CHAN_150
+167 BANK4_IO_CHAN_151
+168 BANK4_IO_CHAN_152
+169 BANK4_IO_CHAN_153
+170 BANK4_IO_CHAN_154
+171 BANK4_IO_CHAN_155
+172 BANK4_IO_CHAN_156
+173 BANK4_IO_CHAN_157
+
+# ============================================================================
+# Special Signals
+# ============================================================================
+180 INIT_B
+181 FPGA_DONE
+182 PG_1V8
+183 PWR_ENABLE
+184 CARRIER_SRST_B

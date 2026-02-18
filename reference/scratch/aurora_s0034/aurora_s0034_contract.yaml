@@ -1,0 +1,194 @@
+# FSHC Contract: Aurora S0034 PGA Burn-In Module
+# Generated from SCH#S0034 Rev A (07/13/24)
+#
+# Board: Aurora PGA Sonoma Air full size BIM
+# DUTs: 5x PGA package devices
+# Test Type: HTOL (High Temperature Operating Life)
+
+name: "Aurora S0034 BIM"
+version: "1.0"
+date: "2024-07-13"
+
+# ==============================================================================
+# Board Physical Constraints
+# ==============================================================================
+board:
+  width_mm: 280.0      # Full size BIM
+  height_mm: 180.0
+  layers: 6
+  stackup: "1-2-3-4-5-6"  # Signal-GND-Signal-Signal-GND-Signal
+  copper_oz: 2
+  min_trace_mm: 0.15
+  min_space_mm: 0.15
+  via_drill_mm: 0.3
+  via_pad_mm: 0.6
+
+# ==============================================================================
+# Target Impedance
+# ==============================================================================
+impedance:
+  z0_single_ended: 50.0
+  z0_differential: 100.0
+  tolerance_pct: 10.0
+
+# ==============================================================================
+# Power Rails
+# ==============================================================================
+power_rails:
+  # PS1 - I/O Power (per DUT)
+  - name: "PS1_DUT1"
+    voltage: 3.3
+    current_max: 2.0
+    ripple_max_mv: 50
+    source: "LCPS_J6_VOUT1"
+
+  - name: "PS1_DUT2"
+    voltage: 3.3
+    current_max: 2.0
+    ripple_max_mv: 50
+    source: "LCPS_J6_VOUT2"
+
+  - name: "PS1_DUT3"
+    voltage: 3.3
+    current_max: 2.0
+    ripple_max_mv: 50
+    source: "LCPS_J6_VOUT3"
+
+  - name: "PS1_DUT4"
+    voltage: 3.3
+    current_max: 2.0
+    ripple_max_mv: 50
+    source: "LCPS_J6_VOUT4"
+
+  - name: "PS1_DUT5"
+    voltage: 3.3
+    current_max: 2.0
+    ripple_max_mv: 50
+    source: "LCPS_J6_VOUT5"
+
+  # PS3 - Core Power (HCPS - High Current)
+  - name: "PS3_CORE"
+    voltage: 0.85
+    current_max: 40.0    # High current!
+    ripple_max_mv: 20    # Tighter ripple for core
+    source: "HCPS_VOUT9"
+
+  # Heater Supply
+  - name: "HEATER_5V"
+    voltage: 5.0
+    current_max: 5.0
+    ripple_max_mv: 100
+    source: "LCPS_J6_VOUT8"
+
+# ==============================================================================
+# Decoupling Requirements (from schematic page 6 & 11)
+# ==============================================================================
+decoupling:
+  ps1:
+    bulk_uf: [47, 100]
+    ceramic_uf: [1, 0.1, 0.01]
+    placement_mm: 5.0    # Max distance from DUT
+
+  ps3:
+    bulk_uf: [1000, 100, 47]   # Heavy bulk for HCPS
+    ceramic_uf: [1, 0.1, 0.01]
+    placement_mm: 3.0    # Closer for high di/dt
+
+# ==============================================================================
+# Components (5 DUTs + support)
+# ==============================================================================
+components:
+  # DUT sockets (PGA)
+  - designator: "DUT1"
+    package: "PGA-40x40"
+    power_w: 10.0
+    theta_ja: 25.0
+
+  - designator: "DUT2"
+    package: "PGA-40x40"
+    power_w: 10.0
+    theta_ja: 25.0
+
+  - designator: "DUT3"
+    package: "PGA-40x40"
+    power_w: 10.0
+    theta_ja: 25.0
+
+  - designator: "DUT4"
+    package: "PGA-40x40"
+    power_w: 10.0
+    theta_ja: 25.0
+
+  - designator: "DUT5"
+    package: "PGA-40x40"
+    power_w: 10.0
+    theta_ja: 25.0
+
+  # Current sense amplifiers (INA214)
+  - designator: "QS5.1"
+    package: "SOT-23-6"
+    function: "current_sense"
+    gain: 100
+
+  # Level shifters (SN74LVC1T45)
+  - designator: "U3.1"
+    package: "SOT-23-6"
+    function: "level_shift"
+
+# ==============================================================================
+# Signal Constraints
+# ==============================================================================
+signals:
+  # I2C for PMBus
+  - name: "I2C0_SCL"
+    type: "clock"
+    frequency_mhz: 0.4
+    impedance: 50
+    length_match_group: "I2C0"
+
+  - name: "I2C0_SDA"
+    type: "data"
+    frequency_mhz: 0.4
+    impedance: 50
+    length_match_group: "I2C0"
+
+  # SPI for ADC/DAC
+  - name: "SPI0_SCLK"
+    type: "clock"
+    frequency_mhz: 20
+    impedance: 50
+    length_match_group: "SPI0"
+
+  # UART console
+  - name: "CONSOLE_UART_TX"
+    type: "data"
+    frequency_mhz: 0.115  # 115200 baud
+    impedance: 50
+
+  - name: "CONSOLE_UART_RX"
+    type: "data"
+    frequency_mhz: 0.115
+    impedance: 50
+
+# ==============================================================================
+# Thermal Constraints (HTOL requirement)
+# ==============================================================================
+thermal:
+  ambient_c: 125.0       # HTOL temp
+  max_junction_c: 150.0
+  airflow_lfm: 200       # Forced air
+  heatsink: true
+
+# ==============================================================================
+# Current Monitoring (INA214 circuits)
+# ==============================================================================
+current_sense:
+  - rail: "PS3_CORE"
+    shunt_ohm: 0.001     # 1 milliohm for 40A
+    gain: 100            # INA214 fixed gain
+    adc_channel: 0
+
+  - rail: "PS1_DUT1"
+    shunt_ohm: 1.3       # RS3.1 from schematic
+    gain: 100
+    adc_channel: 1

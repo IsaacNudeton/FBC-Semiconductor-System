@@ -1,0 +1,84 @@
+(ExpressProject ""
+  (ProjectVersion "19981106")
+  (SoftwareVersion "17.4-2019 P001 (3823098) [10/7/2019]-[08/12/25]")
+  (ProjectType "PCB")
+  (Folder "Design Resources"
+    (Folder "Library")
+    ("Allegro Netlist Directory" "allegro")
+    (File ".\s31_sch_4core_aug_5.dsn"
+      (Type "Schematic Design")
+      (DisplayName ".\s31_sch_4core_aug_5.DSN"))
+    (BuildFileAddedOrDeleted "x")
+    (CompileFileAddedOrDeleted "x")
+    (DOCKED "TRUE")
+    (DOCKING_POSITION "59420")
+    (NoModify)
+    (Netlist_TAB "0")
+    ("Create Allegro Netlist" "TRUE")
+    ("View Allegro Netlist Files" "FALSE")
+    ("Allegro Netlist Create DCF File" "FALSE")
+    ("Update Allegro Board" "FALSE")
+    ("Allegro Netlist Output Board File" ".\allegro\s31_sch_4core_aug_5_ak.brd")
+    ("Allegro Netlist Remove Etch" "FALSE")
+    ("Allegro Netlist Place Changed Component" "ALWAYS_REPLACE")
+    ("Allegro Netlist Open Board in Allegro" "ALLEGRO")
+    ("Allegro Setup Backup Versions" "3")
+    ("Allegro Setup Ignore Constraints" "FALSE")
+    ("Allegro Setup Part Type Length" "255")
+    ("Allegro Netlist Combine Property String" "PCB Footprint")
+    ("Allegro Netlist Ignore Fixed Property" "FALSE")
+    ("Allegro Netlist User Defined Property" "FALSE"))
+  (Folder "Layout")
+  (Folder "Outputs"
+    (File ".\allegro\pstxnet.dat"
+      (Type "Report")
+      (DisplayName "pstxnet.dat"))
+    (File ".\allegro\pstxprt.dat"
+      (Type "Report")
+      (DisplayName "pstxprt.dat"))
+    (File ".\allegro\pstchip.dat"
+      (Type "Report")
+      (DisplayName "pstchip.dat")))
+  (Folder "Referenced Projects")
+  (Folder "PSpice Resources"
+    (Folder "Simulation Profiles")
+    (Folder "Model Libraries"
+      (Sort User))
+    (Folder "Stimulus Files"
+      (Sort User))
+    (Folder "Include Files"
+      (Sort User)))
+  (Folder "Logs")
+  (MPSSessionName "annak")
+  (PartMRUSelector)
+  (GlobalState
+    (FileView
+      (Path "Design Resources")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn" "S0031_Half_BIM")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn" "3CORE")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn"
+         "Controller_J3_J4_J5")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn" "CORE")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn" "CORE_2_5_6_CNTRL")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn"
+         "DIFF_CLK_100MHz HCSL")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn"
+         "DIFF_CLK_156.25MHz HCSL")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn" "DUT")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn" "HCPS_R0")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn" "J6_LED_POWER")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn" "LCPS_J6")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn"
+         "LED_POWER_CORE_HCPS")
+      (Path "Design Resources" ".\s31_sch_4core_aug_5.dsn"
+         "THERMISTOR TEMP CONTROL")
+      (Path "Outputs")
+      (Select "Design Resources" ".\s31_sch_4core_aug_5.dsn"))
+    (HierarchyView)
+    (Doc
+      (Type "COrCapturePMDoc")
+      (Frame
+        (Placement "44 0 1 -1 -1 -1 -1 0 332 0 829"))
+      (Tab 0)))
+  (ISPCBBASICLICENSE "false"))

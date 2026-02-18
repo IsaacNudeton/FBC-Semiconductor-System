@@ -1,0 +1,52 @@
+[package]
+name = "fbc-host"
+version = "2.0.0"
+edition = "2021"
+authors = ["ISE Labs"]
+description = "FBC System v2 Host Library - Raw Ethernet, no TCP/IP"
+license = "Proprietary"
+
+[lib]
+name = "fbc_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fbc-cli"
+path = "src/bin/cli.rs"
+
+[[bin]]
+name = "fbc-vec"
+path = "src/bin/fvec.rs"
+
+[dependencies]
+# Raw Ethernet (Layer 2)
+pnet = "0.35"
+pnet_datalink = "0.35"
+pnet_packet = "0.35"
+
+# Async runtime
+tokio = { version = "1", features = ["full", "sync"] }
+
+# Serialization
+byteorder = "1.5"
+crc32fast = "1.4"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# MAC address parsing
+macaddr = "1.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = []

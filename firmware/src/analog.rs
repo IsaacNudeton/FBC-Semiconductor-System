@@ -1,0 +1,340 @@
+//! Analog Monitor - Simple 32-Channel Interface for GUI
+//!
+//! Combines XADC (ch 0-15) + MAX11131 (ch 16-31) into one easy API.
+//!
+//! GUI Usage:
+//! ```
+//! let readings = monitor.read_all()?;
+//! for r in &readings {
+//!     println!("{}: {:.2} {}", r.name, r.value, r.unit);
+//! }
+//! ```
+
+use crate::hal::{Xadc, Max11131, SpiError};
+
+/// Total channels: XADC (16) + MAX11131 (16)
+pub const NUM_CHANNELS: usize = 32;
+
+/// Reference voltage for external ADC (mV)
+const EXT_ADC_VREF_MV: u16 = 4096;
+
+/// A single analog reading - everything GUI needs
+#[derive(Clone, Copy)]
+pub struct Reading {
+    /// Channel number (0-31)
+    pub channel: u8,
+    /// Human-readable name
+    pub name: &'static str,
+    /// Converted value in engineering units
+    pub value: f32,
+    /// Unit string (mV, °C, mA, etc.)
+    pub unit: &'static str,
+    /// Raw ADC value (for debugging)
+    pub raw: u16,
+}
+
+/// Formula for converting raw ADC to engineering units
+#[derive(Clone, Copy)]
+enum Formula {
+    /// No conversion: value = raw
+    Raw,
+    /// Voltage: value = raw × scale / 4096 (result in mV)
+    Voltage { scale_mv: u16 },
+    /// Temperature from die sensor
+    DieTemp,
+    /// Thermistor (Steinhart-Hart simplified)
+    Thermistor { b_coeff: f32, r_ref: f32 },
+    /// Current shunt: I = V / R (result in mA)
+    Current { shunt_mohm: u16 },
+}
+
+/// Channel configuration (compile-time invariant)
+struct ChannelConfig {
+    name: &'static str,
+    formula: Formula,
+    unit: &'static str,
+}
+
+/// Channel map - defines what each channel measures
+/// Channels 0-15: XADC (Zynq internal)
+/// Channels 16-31: MAX11131 (external)
+const CHANNELS: [ChannelConfig; NUM_CHANNELS] = [
+    // === XADC Channels (0-15) ===
+    ChannelConfig { name: "DIE_TEMP", formula: Formula::DieTemp, unit: "C" },
+    ChannelConfig { name: "VCCINT", formula: Formula::Voltage { scale_mv: 3000 }, unit: "mV" },
+    ChannelConfig { name: "VCCAUX", formula: Formula::Voltage { scale_mv: 3000 }, unit: "mV" },
+    ChannelConfig { name: "VCCBRAM", formula: Formula::Voltage { scale_mv: 3000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX0", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX1", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX2", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX3", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX4", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX5", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX6", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX7", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX8", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX9", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX10", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+    ChannelConfig { name: "XADC_AUX11", formula: Formula::Voltage { scale_mv: 1000 }, unit: "mV" },
+
+    // === MAX11131 Channels (16-31) ===
+    ChannelConfig { name: "VDD_CORE1", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
+    ChannelConfig { name: "VDD_CORE2", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
+    ChannelConfig { name: "VDD_CORE3", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
+    ChannelConfig { name: "VDD_CORE4", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
+    ChannelConfig { name: "VDD_CORE5", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
+    ChannelConfig { name: "VDD_CORE6", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
+    ChannelConfig { name: "THERM_CASE", formula: Formula::Thermistor { b_coeff: 3950.0, r_ref: 10000.0 }, unit: "C" },
+    ChannelConfig { name: "THERM_DUT", formula: Formula::Thermistor { b_coeff: 3950.0, r_ref: 10000.0 }, unit: "C" },
+    ChannelConfig { name: "I_CORE1", formula: Formula::Current { shunt_mohm: 50 }, unit: "mA" },
+    ChannelConfig { name: "I_CORE2", formula: Formula::Current { shunt_mohm: 50 }, unit: "mA" },
+    ChannelConfig { name: "VDD_IO", formula: Formula::Voltage { scale_mv: 5000 }, unit: "mV" },
+    ChannelConfig { name: "VDD_3V3", formula: Formula::Voltage { scale_mv: 5000 }, unit: "mV" },
+    ChannelConfig { name: "VDD_1V8", formula: Formula::Voltage { scale_mv: 3000 }, unit: "mV" },
+    ChannelConfig { name: "VDD_1V2", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
+    ChannelConfig { name: "EXT_ADC14", formula: Formula::Voltage { scale_mv: 4096 }, unit: "mV" },
+    ChannelConfig { name: "EXT_ADC15", formula: Formula::Voltage { scale_mv: 4096 }, unit: "mV" },
+];
+
+/// Monitor error
+#[derive(Debug, Clone, Copy)]
+pub enum MonitorError {
+    /// Invalid channel number
+    InvalidChannel,
+    /// Channel name not found
+    NameNotFound,
+    /// SPI error
+    Spi(SpiError),
+    /// XADC error
+    Xadc,
+}
+
+impl From<SpiError> for MonitorError {
+    fn from(e: SpiError) -> Self {
+        MonitorError::Spi(e)
+    }
+}
+
+/// Analog Monitor - unified 32-channel interface
+pub struct AnalogMonitor<'a> {
+    xadc: &'a Xadc,
+    ext_adc: &'a Max11131<'a>,
+}
+
+impl<'a> AnalogMonitor<'a> {
+    /// Create new analog monitor
+    pub fn new(xadc: &'a Xadc, ext_adc: &'a Max11131<'a>) -> Self {
+        Self { xadc, ext_adc }
+    }
+
+    // ========================================
+    // SIMPLE GUI API
+    // ========================================
+
+    /// Read single channel by number (0-31)
+    ///
+    /// Returns Reading with name, value, unit, raw
+    pub fn read(&self, channel: u8) -> Result<Reading, MonitorError> {
+        if channel >= NUM_CHANNELS as u8 {
+            return Err(MonitorError::InvalidChannel);
+        }
+
+        let raw = self.read_raw(channel)?;
+        let config = &CHANNELS[channel as usize];
+        let value = self.apply_formula(raw, config.formula);
+
+        Ok(Reading {
+            channel,
+            name: config.name,
+            value,
+            unit: config.unit,
+            raw,
+        })
+    }
+
+    /// Read single channel by name
+    ///
+    /// Example: `monitor.read_by_name("VDD_CORE1")?`
+    pub fn read_by_name(&self, name: &str) -> Result<Reading, MonitorError> {
+        for (i, config) in CHANNELS.iter().enumerate() {
+            if config.name == name {
+                return self.read(i as u8);
+            }
+        }
+        Err(MonitorError::NameNotFound)
+    }
+
+    /// Read ALL 32 channels at once
+    ///
+    /// This is the main GUI function - returns everything you need
+    pub fn read_all(&self) -> Result<[Reading; NUM_CHANNELS], MonitorError> {
+        // Read XADC channels (0-15)
+        let mut readings: [Reading; NUM_CHANNELS] = [Reading {
+            channel: 0,
+            name: "",
+            value: 0.0,
+            unit: "",
+            raw: 0,
+        }; NUM_CHANNELS];
+
+        // Read external ADC (batch)
+        let ext_raw = self.ext_adc.read_all()?;
+
+        // Build readings array
+        for ch in 0..NUM_CHANNELS {
+            let raw = if ch < 16 {
+                // XADC channel
+                self.read_xadc_channel(ch as u8)?
+            } else {
+                // External ADC channel
+                ext_raw[ch - 16]
+            };
+
+            let config = &CHANNELS[ch];
+            let value = self.apply_formula(raw, config.formula);
+
+            readings[ch] = Reading {
+                channel: ch as u8,
+                name: config.name,
+                value,
+                unit: config.unit,
+                raw,
+            };
+        }
+
+        Ok(readings)
+    }
+
+    /// Get channel name (for GUI labels)
+    pub fn get_name(&self, channel: u8) -> &'static str {
+        if (channel as usize) < NUM_CHANNELS {
+            CHANNELS[channel as usize].name
+        } else {
+            "UNKNOWN"
+        }
+    }
+
+    /// Get channel unit (for GUI labels)
+    pub fn get_unit(&self, channel: u8) -> &'static str {
+        if (channel as usize) < NUM_CHANNELS {
+            CHANNELS[channel as usize].unit
+        } else {
+            ""
+        }
+    }
+
+    /// Find channel number by name
+    pub fn find_channel(&self, name: &str) -> Option<u8> {
+        for (i, config) in CHANNELS.iter().enumerate() {
+            if config.name == name {
+                return Some(i as u8);
+            }
+        }
+        None
+    }
+
+    /// Get list of all channel names (for GUI dropdown)
+    pub fn channel_names(&self) -> [&'static str; NUM_CHANNELS] {
+        let mut names = [""; NUM_CHANNELS];
+        for (i, config) in CHANNELS.iter().enumerate() {
+            names[i] = config.name;
+        }
+        names
+    }
+
+    // ========================================
+    // INTERNAL
+    // ========================================
+
+    /// Read raw value from channel
+    fn read_raw(&self, channel: u8) -> Result<u16, MonitorError> {
+        if channel < 16 {
+            self.read_xadc_channel(channel)
+        } else {
+            Ok(self.ext_adc.read_channel(channel - 16)?)
+        }
+    }
+
+    /// Read XADC channel
+    fn read_xadc_channel(&self, ch: u8) -> Result<u16, MonitorError> {
+        // Map channel to XADC function
+        match ch {
+            0 => {
+                // Die temperature - return millicelsius / 10 as pseudo-raw
+                match self.xadc.read_temperature_millicelsius() {
+                    Ok(mc) => Ok(((mc + 273150) / 100) as u16), // Convert to deciKelvin
+                    Err(_) => Err(MonitorError::Xadc),
+                }
+            }
+            1 => self.xadc.read_vccint_raw().map_err(|_| MonitorError::Xadc),
+            2 => self.xadc.read_vccaux_raw().map_err(|_| MonitorError::Xadc),
+            3 => self.xadc.read_vccbram_raw().map_err(|_| MonitorError::Xadc),
+            4..=15 => self.xadc.read_vaux_raw(ch - 4).map_err(|_| MonitorError::Xadc),
+            _ => Err(MonitorError::InvalidChannel),
+        }
+    }
+
+    /// Apply formula to convert raw value to engineering units
+    fn apply_formula(&self, raw: u16, formula: Formula) -> f32 {
+        match formula {
+            Formula::Raw => raw as f32,
+
+            Formula::Voltage { scale_mv } => {
+                // V = raw × scale / 4096
+                (raw as f32) * (scale_mv as f32) / 4096.0
+            }
+
+            Formula::DieTemp => {
+                // Raw is (temp_K × 10), convert to Celsius
+                (raw as f32) / 10.0 - 273.15
+            }
+
+            Formula::Thermistor { b_coeff, r_ref } => {
+                // Simplified thermistor calculation (no ln() in no_std)
+                // Return resistance ratio × 100 as approximate temp indicator
+                // GUI can do full Steinhart-Hart if needed
+                if raw >= 4095 {
+                    return 999.0; // Open circuit
+                }
+                if raw == 0 {
+                    return -999.0; // Short circuit
+                }
+
+                // R = Rref × raw / (4096 - raw)
+                let r = (r_ref * (raw as f32)) / (4096.0 - (raw as f32));
+
+                // Linear approximation: T ≈ 25 + (R - Rref) × (-0.01)
+                // This is rough but works for ±50°C range
+                // For accurate temp, GUI should use full Steinhart-Hart
+                let _ = b_coeff; // Will use in full implementation
+                25.0 - ((r - r_ref) / r_ref) * 25.0
+            }
+
+            Formula::Current { shunt_mohm } => {
+                // I = V / R
+                // V = raw × Vref / 4096
+                // I (mA) = V (mV) / R (mΩ)
+                let v_mv = (raw as f32) * (EXT_ADC_VREF_MV as f32) / 4096.0;
+                v_mv / (shunt_mohm as f32)
+            }
+        }
+    }
+}
+
+// ========================================
+// CONVENIENCE: Print all readings
+// ========================================
+
+impl Reading {
+    /// Format reading as string for display
+    pub fn to_string(&self) -> [u8; 64] {
+        // Simple formatting without alloc
+        let mut buf = [0u8; 64];
+        // In real impl, would format: "VDD_CORE1: 1000.0 mV"
+        // For now, just copy name
+        let name_bytes = self.name.as_bytes();
+        let len = name_bytes.len().min(63);
+        buf[..len].copy_from_slice(&name_bytes[..len]);
+        buf
+    }
+}

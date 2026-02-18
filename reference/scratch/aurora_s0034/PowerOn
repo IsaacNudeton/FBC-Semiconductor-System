@@ -1,0 +1,87 @@
+# Aurora S0034 PowerOn Sequence
+# Board: Aurora PGA Sonoma Air full size BIM (5 DUTs)
+# Generated from SCH#S0034 Rev A (07/13/24)
+#
+# Voltage trim formula: Rtrim = 12 / (Vo - 0.6) kohm
+# PS1 (3.3V): Rtrim = 4.42K -> Vo = 3.31V
+# Daughter (~4.5V): Rtrim = 3.09K -> Vo = 4.48V
+# Heaters (5V): Rtrim = 2.43K -> Vo = 5.54V
+
+# ============================================================================
+# STEP 1: Enable Core Power Supplies (via MIO GPIO)
+# ============================================================================
+# EN_COREPS1-6 control the main power enables
+/mnt/bin/ToggleMio.elf 0 1     # EN_COREPS1/MIO0
+/mnt/bin/ToggleMio.elf 8 1     # EN_COREPS2/MIO8
+sleep 0.1
+
+# ============================================================================
+# STEP 2: LCPS J6 - PS1 (3.3V) for each DUT
+# ============================================================================
+# Using LCPS address scheme: VOUT 1-8 = 23.7K ADDR resistor
+# Trim = 4.42K gives ~3.3V output
+
+/mnt/bin/linux_pmbus_PicoDlynx.elf 1 3.3      # VOUT1 -> PS1 DUT1
+/mnt/bin/linux_pmbus_PicoDlynx.elf 2 3.3      # VOUT2 -> PS1 DUT2
+/mnt/bin/linux_pmbus_PicoDlynx.elf 3 3.3      # VOUT3 -> PS1 DUT3
+/mnt/bin/linux_pmbus_PicoDlynx.elf 4 3.3      # VOUT4 -> PS1 DUT4
+/mnt/bin/linux_pmbus_PicoDlynx.elf 5 3.3      # VOUT5 -> PS1 DUT5
+
+sleep 0.1
+
+# ============================================================================
+# STEP 3: LCPS J6 - Daughter card supplies
+# ============================================================================
+/mnt/bin/linux_pmbus_PicoDlynx.elf 6 4.5      # VOUT6 -> Daughter DUT1
+/mnt/bin/linux_pmbus_PicoDlynx.elf 7 4.5      # VOUT7 -> Daughter DUT2
+
+# ============================================================================
+# STEP 4: LCPS J7 - Additional daughter card supplies
+# ============================================================================
+# J7 channels are offset by 8 from J6
+/mnt/bin/linux_pmbus_PicoDlynx.elf 9 4.5      # VOUT1(J7) -> Daughter DUT2
+/mnt/bin/linux_pmbus_PicoDlynx.elf 10 4.5     # VOUT2(J7) -> Daughter DUT2
+/mnt/bin/linux_pmbus_PicoDlynx.elf 11 4.5     # VOUT3(J7) -> Daughter DUT3
+/mnt/bin/linux_pmbus_PicoDlynx.elf 12 4.5     # VOUT4(J7) -> Daughter DUT3
+/mnt/bin/linux_pmbus_PicoDlynx.elf 13 4.5     # VOUT5(J7) -> Daughter DUT4
+/mnt/bin/linux_pmbus_PicoDlynx.elf 14 4.5     # VOUT6(J7) -> Daughter DUT4
+/mnt/bin/linux_pmbus_PicoDlynx.elf 15 4.5     # VOUT7(J7) -> Daughter DUT5
+/mnt/bin/linux_pmbus_PicoDlynx.elf 16 4.5     # VOUT8(J7) -> Daughter DUT5
+
+sleep 0.1
+
+# ============================================================================
+# STEP 5: Enable remaining core supplies
+# ============================================================================
+/mnt/bin/ToggleMio.elf 47 1    # EN_COREPS3/MIO47
+/mnt/bin/ToggleMio.elf 39 1    # EN_COREPS4/MIO39
+/mnt/bin/ToggleMio.elf 38 1    # EN_COREPS5/MIO38
+/mnt/bin/ToggleMio.elf 37 1    # EN_COREPS6/MIO37
+
+sleep 0.1
+
+# ============================================================================
+# STEP 6: HCPS (High Current) - PS3 via VOUT9
+# ============================================================================
+# PS3 is the main high-current supply for the DUT core
+# Adjust voltage as needed per DUT datasheet
+/mnt/bin/linux_pmbus_PicoDlynx.elf 17 0.85    # HCPS VOUT9 -> PS3 (example: 0.85V core)
+
+sleep 0.2
+
+# ============================================================================
+# STEP 7: Heater supply (if needed for HTOL)
+# ============================================================================
+/mnt/bin/linux_pmbus_PicoDlynx.elf 8 5.0      # VOUT8(J6) -> +5V Heater switches
+
+# ============================================================================
+# STEP 8: Verify power rails via ADC
+# ============================================================================
+echo
+echo "=== ADC Readback (verify power rails) ==="
+/mnt/bin/ADC32ChPlusStats.elf
+echo
+echo "=== XADC Readback ==="
+/mnt/bin/XADC32Ch.elf
+echo
+echo "PowerOn complete for Aurora S0034"

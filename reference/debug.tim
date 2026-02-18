@@ -1,0 +1,30 @@
+/mnt/bin/linux_xpll_frequency.elf 1 5000000 0 50      # PATTERN FREQUENCY
+/mnt/bin/linux_xpll_frequency.elf 4 100000000 0 50      # 100MHz
+
+# TURN ON/OFF REFCLKs
+/mnt/bin/linux_xpll_off_on.elf 1 1 1 1
+
+# BIDI_PIN    0
+# MONITOR     1
+# DRIVE       2
+# OPEN_C_PIN  3
+# PULSE_PIN   4
+# NPULSE_PIN  5
+# ERROR_TRIG  6
+# VEC_CLK_PIN 7
+
+
+# RZ Clocks
+/mnt/bin/linux_Pulse_Delays.elf 45 5 50 150 200         #TCK_G1
+/mnt/bin/linux_Pulse_Delays.elf 66 5 50 150 200         #TCK_G2
+
+#1=mon, 2=drive, 3=I/O
+/mnt/bin/linux_pin_type.elf 3 2                         #TDO_C1
+/mnt/bin/linux_pin_type.elf 26 1                        #TDO_C2
+/mnt/bin/linux_pin_type.elf 25 2                        #TDO_C3
+/mnt/bin/linux_pin_type.elf 117 2                       #TDO_C4
+/mnt/bin/linux_pin_type.elf 118 2                       #TDO_C5
+/mnt/bin/linux_pin_type.elf 109 2                       #TDO_C6
+/mnt/bin/linux_pin_type.elf 10 2                        #BUFF_EN1
+/mnt/bin/linux_pin_type.elf 77 2                        #BUFF_EN2
+/mnt/bin/linux_pin_type.elf 91 2                        #BUFF_EN3

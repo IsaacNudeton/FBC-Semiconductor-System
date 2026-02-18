@@ -1,0 +1,300 @@
+{
+  "$schema": "fbc-device-config-v1",
+  "name": "Calibration Board Rev B",
+  "part_number": "02292C02-CALIB-REVB",
+  "description": "FBC System Calibration and Verification Board",
+  "pin_count": 160,
+  "created": "2026-02-10",
+
+  "pin_mapping": {
+    "description": "Pin assignments from schematic CalibrationBoard05Dec2018",
+
+    "bank_13": {
+      "range": "GPIO0-47",
+      "vcco": "1.8V",
+      "connector": "J4a",
+      "pins": {
+        "GPIO0_47": { "type": "bidi", "pair": true, "notes": "Directly connected pair" },
+        "GPIO3_4": { "type": "bidi", "pair": true },
+        "GPIO8_7": { "type": "bidi", "pair": true },
+        "GPIO25_26": { "type": "bidi", "pair": true },
+        "GPIO35_36": { "type": "bidi", "pair": true },
+        "GPIO38_37": { "type": "bidi", "pair": true },
+        "GPIO40_39": { "type": "bidi", "pair": true },
+        "GPIO42_41": { "type": "bidi", "pair": true },
+        "GPIO34_33": { "type": "bidi", "pair": true },
+        "GPIO46_45": { "type": "bidi", "pair": true },
+        "BANK13_SYSCLK1_P": { "type": "clock", "pin": 33 },
+        "BANK13_SYSCLK1_N": { "type": "clock", "pin": 31 }
+      }
+    },
+
+    "bank_33": {
+      "range": "GPIO48-95",
+      "vcco": "1.8V",
+      "connector": "J4b/J4c",
+      "pins": {
+        "GPIO49_50": { "type": "bidi", "pair": true },
+        "GPIO51_52": { "type": "bidi", "pair": true },
+        "GPIO53_54": { "type": "bidi", "pair": true },
+        "GPIO56_55": { "type": "bidi", "pair": true },
+        "GPIO58_57": { "type": "bidi", "pair": true },
+        "GPIO60_59": { "type": "bidi", "pair": true },
+        "GPIO62_61": { "type": "bidi", "pair": true },
+        "GPIO64_63": { "type": "bidi", "pair": true },
+        "GPIO66_65": { "type": "bidi", "pair": true },
+        "GPIO68_67": { "type": "bidi", "pair": true },
+        "GPIO70_69": { "type": "bidi", "pair": true },
+        "GPIO72_71": { "type": "bidi", "pair": true },
+        "GPIO74_73": { "type": "bidi", "pair": true },
+        "GPIO76_75": { "type": "bidi", "pair": true },
+        "GPIO78_77": { "type": "bidi", "pair": true },
+        "GPIO80_79": { "type": "bidi", "pair": true },
+        "GPIO82_81": { "type": "bidi", "pair": true },
+        "GPIO83_84": { "type": "bidi", "pair": true },
+        "GPIO86_85": { "type": "bidi", "pair": true },
+        "GPIO88_87": { "type": "bidi", "pair": true },
+        "GPIO90_89": { "type": "bidi", "pair": true },
+        "GPIO92_91": { "type": "bidi", "pair": true },
+        "GPIO93_94": { "type": "bidi", "pair": true },
+        "GPIO95_48": { "type": "bidi", "pair": true },
+        "B33_SYSCLK2_P": { "type": "clock", "pin": 135 },
+        "B33_SYSCLK2_N": { "type": "clock", "pin": 137 }
+      }
+    },
+
+    "bank_34": {
+      "range": "GPIO96-127",
+      "vcco": "1.8V",
+      "connector": "J5a/J5b",
+      "pins": {
+        "GPIO96_127": { "type": "bidi", "pair": true },
+        "GPIO97_98": { "type": "bidi", "pair": true },
+        "GPIO100_99": { "type": "bidi", "pair": true },
+        "GPIO102_101": { "type": "bidi", "pair": true },
+        "GPIO104_103": { "type": "bidi", "pair": true },
+        "GPIO105_106": { "type": "bidi", "pair": true },
+        "GPIO108_107": { "type": "bidi", "pair": true },
+        "GPIO110_119": { "type": "bidi", "pair": true },
+        "GPIO112_111": { "type": "bidi", "pair": true },
+        "GPIO114_113": { "type": "bidi", "pair": true },
+        "GPIO116_115": { "type": "bidi", "pair": true },
+        "GPIO118_117": { "type": "bidi", "pair": true },
+        "GPIO120_119": { "type": "bidi", "pair": true },
+        "GPIO121_122": { "type": "bidi", "pair": true },
+        "GPIO123_124": { "type": "bidi", "pair": true },
+        "GPIO126_125": { "type": "bidi", "pair": true },
+        "B34_SYSCLK3_P": { "type": "clock", "pin": 135 },
+        "B34_SYSCLK3_N": { "type": "clock", "pin": 137 }
+      }
+    },
+
+    "bank_35_fast": {
+      "range": "GPIO128-159",
+      "vcco": "1.8V",
+      "connector": "J5b/J5c",
+      "direct": true,
+      "latency_cycles": 1,
+      "pins": {
+        "GPIO129_130": { "type": "bidi", "pair": true },
+        "GPIO132_131": { "type": "bidi", "pair": true },
+        "GPIO133_134": { "type": "bidi", "pair": true },
+        "GPIO135_136": { "type": "bidi", "pair": true },
+        "GPIO138_137": { "type": "bidi", "pair": true },
+        "GPIO140_139": { "type": "bidi", "pair": true },
+        "GPIO141_142": { "type": "bidi", "pair": true },
+        "GPIO143_128": { "type": "bidi", "pair": true },
+        "GPIO144_157": { "type": "bidi", "pair": true },
+        "GPIO146_145": { "type": "bidi", "pair": true },
+        "GPIO148_147": { "type": "bidi", "pair": true },
+        "GPIO150_149": { "type": "bidi", "pair": true },
+        "GPIO152_151": { "type": "bidi", "pair": true },
+        "GPIO154_153": { "type": "bidi", "pair": true },
+        "GPIO156_155": { "type": "bidi", "pair": true },
+        "B35_SYSCLK0_P": { "type": "clock", "pin": 104 },
+        "B35_SYSCLK0_N": { "type": "clock", "pin": 106 },
+        "B35_VEC_CLK_P": { "type": "vec_clk", "pin": 157 },
+        "B35_VEC_CLK_N": { "type": "vec_clk", "pin": 159 }
+      }
+    }
+  },
+
+  "adc_channels": {
+    "xadc_internal": [
+      { "ch": 0, "name": "DIE_TEMP", "type": "temperature" },
+      { "ch": 1, "name": "VCCINT", "type": "voltage", "scale": 3.0 },
+      { "ch": 2, "name": "VCCAUX", "type": "voltage", "scale": 3.0 },
+      { "ch": 3, "name": "VCCBRAM", "type": "voltage", "scale": 3.0 }
+    ],
+    "external_max11131": [
+      { "ch": 0, "name": "AD00_P_4.096VREF_DIV5", "divider": 5, "expected_v": 0.819 },
+      { "ch": 1, "name": "AD01_P_12V_DIV20", "divider": 20, "expected_v": 0.6 },
+      { "ch": 2, "name": "AD02_P_DIV5", "divider": 5 },
+      { "ch": 3, "name": "AD03_P_CORE130W", "type": "voltage" },
+      { "ch": 4, "name": "AD04_P_DAC_OUT6", "type": "dac_feedback" },
+      { "ch": 5, "name": "AD05_P_DAC_OUT5", "type": "dac_feedback" },
+      { "ch": 6, "name": "AD06_P_DAC_OUT2", "type": "dac_feedback" },
+      { "ch": 7, "name": "AD07_P_DAC_OUT3", "type": "dac_feedback" },
+      { "ch": 8, "name": "AD08_P_3p3V", "type": "voltage" },
+      { "ch": 9, "name": "AD09_P_DAC_OUT8", "type": "dac_feedback" },
+      { "ch": 10, "name": "AD10_P_130W_I", "type": "current_sense" },
+      { "ch": 11, "name": "AD11_P_CORE250W", "type": "voltage" },
+      { "ch": 12, "name": "AD12_P_DAC_OUT9", "type": "dac_feedback" },
+      { "ch": 13, "name": "AD13_P_DAC_OUT7", "type": "dac_feedback" },
+      { "ch": 14, "name": "AD14_P_DAC_OUT4", "type": "dac_feedback" },
+      { "ch": 15, "name": "AD15_P_DAC_OUT1", "type": "dac_feedback" }
+    ],
+    "qsh_adc_inputs": [
+      { "name": "ADC_IN8_48V_DIV20", "divider": 20, "max_input_v": 60 },
+      { "name": "VCCO_13_ADC_IN9", "type": "bank_voltage" },
+      { "name": "VCCO_33_ADC_IN10", "type": "bank_voltage" },
+      { "name": "VCCO_34_ADC_IN11", "type": "bank_voltage" },
+      { "name": "VCCO_35_ADC_IN12", "type": "bank_voltage" },
+      { "name": "ADC_IN13", "type": "general" },
+      { "name": "DAC_OUT10_ADC14", "type": "dac_feedback" },
+      { "name": "ADC_IN15_ThermalSenseIn", "type": "temperature" }
+    ]
+  },
+
+  "dac_channels": {
+    "bu2505": {
+      "reference_v": 4.096,
+      "resolution_bits": 10,
+      "channels": [
+        { "ch": 0, "name": "DAC_OUT1", "feedback_adc": "AD15_P" },
+        { "ch": 1, "name": "DAC_OUT2", "feedback_adc": "AD06_P" },
+        { "ch": 2, "name": "DAC_OUT3", "feedback_adc": "AD07_P" },
+        { "ch": 3, "name": "DAC_OUT4", "feedback_adc": "AD14_P" },
+        { "ch": 4, "name": "DAC_OUT5", "feedback_adc": "AD05_P" },
+        { "ch": 5, "name": "DAC_OUT6", "feedback_adc": "AD04_P" },
+        { "ch": 6, "name": "DAC_OUT7", "feedback_adc": "AD13_P" },
+        { "ch": 7, "name": "DAC_OUT8", "feedback_adc": "AD09_P" },
+        { "ch": 8, "name": "DAC_OUT9", "feedback_adc": "AD12_P" },
+        { "ch": 9, "name": "DAC_OUT10", "feedback_adc": "ADC_IN14" }
+      ]
+    }
+  },
+
+  "power_outputs": {
+    "vout_channels": [
+      { "ch": 1, "led": "LED1", "load_ohm": 2.2, "max_current_ma": 550 },
+      { "ch": 2, "led": "LED2", "load_ohm": 2.2, "max_current_ma": 550 },
+      { "ch": 3, "led": "LED3", "load_ohm": 2.2, "max_current_ma": 550 },
+      { "ch": 4, "led": "LED4", "load_ohm": 2.2, "max_current_ma": 550 },
+      { "ch": 5, "led": "LED5", "load_ohm": 2.2, "max_current_ma": 550 },
+      { "ch": 6, "led": "LED6", "load_ohm": 2.2, "max_current_ma": 550 },
+      { "ch": 7, "led": "LED7", "load_ohm": 2.2, "max_current_ma": 550 },
+      { "ch": 8, "led": "LED8", "load_ohm": 2.2, "max_current_ma": 550 }
+    ]
+  },
+
+  "thermal_control": {
+    "cooler_switch": {
+      "signal": "COOLER_SW",
+      "pins_odd": [157, 159, 161, 163, 165, 167, 169, 171, 173, 175, 177, 179],
+      "connector": "J3c"
+    },
+    "heater_switch": {
+      "signal": "HEATER_SW",
+      "pins": [189, 190, 191, 192],
+      "connector": "J3c"
+    },
+    "temperature_diode": {
+      "positive": "DUT_TEMP_DIODE_J_P",
+      "negative": "DUT_TEMP_DIODE_J_N",
+      "connector": "J3a",
+      "pins": [43, 45]
+    },
+    "ntc_thermistor": {
+      "signal": "CMP_IN1_NTC",
+      "adc": "ADC_IN15_ThermalSenseIn"
+    }
+  },
+
+  "communication": {
+    "i2c0": {
+      "scl": "I2C0_SCL_MIO50",
+      "sda": "I2C0_SDA_MIO51",
+      "devices": [
+        { "name": "EEPROM", "type": "CAT24C02", "address": "0x50" }
+      ]
+    },
+    "i2c1": {
+      "scl": "I2C1_SCL_MIO12",
+      "sda": "I2C1_SDA_MIO13"
+    },
+    "spi0": {
+      "sclk": "SPI0_SCLK_MIO28",
+      "mosi": "SPI0_MOSI_MIO33",
+      "miso": "SPI0_MISO_SLAVE2_MIO29",
+      "ss2": "SPI0_SS2_MIO32"
+    },
+    "spi1": {
+      "sclk": "SPI1_SCLK_MIO36",
+      "mosi": "SPI1_MOSI_MIO34",
+      "miso_slave0": "SPI1_MISO_SLAVE0",
+      "miso_slave1": "SPI1_MISO_SLAVE1",
+      "miso_slave2": "SPI1_MISO_SLAVE2_MIO35",
+      "ss0": "SPI1_SS0_MIO37",
+      "ss1": "SPI1_SS1_MIO38",
+      "ss2": "SPI1_SS2_MIO39"
+    },
+    "uart_console": {
+      "rx": "CONSOLE_UART_RX_MIO48",
+      "tx": "CONSOLE_UART_TX_MIO49",
+      "baud": 115200
+    },
+    "usb_uart": {
+      "chip": "CP2104",
+      "connector": "J7 MicroUSB"
+    }
+  },
+
+  "control_signals": {
+    "status_led": "STATUS_LED_MIO0",
+    "dev_id0": "DEV_ID0_MIO7",
+    "dev_id1": "DEV_ID1_MIO8",
+    "smbus_alert": "SMBUS_ALERT_N_MIO9",
+    "dut_present": "DUT_PRESENT_N_MIO10",
+    "dac_load": "DAC_LD_MIO14",
+    "adc_eoc": "ADC_EOC",
+    "pwr_enable": "PWR_ENABLE",
+    "pg_1v8": "PG_1V8",
+    "fpga_done": "FPGA_DONE",
+    "init_b": "INIT_B",
+    "carrier_reset": "CARRIER_SRST_B"
+  },
+
+  "vicor_modules": {
+    "core_250w": {
+      "connectors": ["J8", "J9"],
+      "input_v": 48,
+      "output_v_range": [0.8, 1.2],
+      "max_current_a": 250,
+      "sense_resistors_mohm": 4
+    },
+    "core_130w": {
+      "connector": "J10",
+      "input_v": 48,
+      "output_v_range": [0.8, 1.2],
+      "max_current_a": 130,
+      "sense_resistors_mohm": 8
+    },
+    "4ch_40a": {
+      "connector": "J11",
+      "channels": 4,
+      "max_current_per_ch_a": 40,
+      "outputs": ["VOUT9", "VOUT10", "VOUT11", "VOUT12"],
+      "sense_lines": ["VS9+", "VS10+", "VS11+", "VS12+"]
+    }
+  },
+
+  "timing": {
+    "default_vec_clock_mhz": 10,
+    "max_vec_clock_mhz": 100,
+    "setup_ns": 5,
+    "hold_ns": 5,
+    "bim_latency_cycles": 2,
+    "fast_latency_cycles": 1
+  }
+}

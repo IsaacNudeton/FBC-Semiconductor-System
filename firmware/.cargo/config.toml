@@ -1,0 +1,23 @@
+# Cargo configuration for Zynq 7020 (ARM Cortex-A9)
+
+[build]
+target = "armv7a-none-eabi"
+
+[target.armv7a-none-eabi]
+# Use rust-lld linker (bundled with Rust, no external toolchain needed)
+linker = "rust-lld"
+rustflags = [
+    "-C", "linker-flavor=ld.lld",
+    "-C", "link-arg=-Tlink.ld",
+    "-C", "target-cpu=cortex-a9",
+]
+
+runner = "arm-none-eabi-gdb -x gdb.script"
+
+[env]
+# Set heap size (64KB)
+FBC_HEAP_SIZE = "65536"
+
+[alias]
+elf = "build --release"
+bin = "objcopy -O binary target/armv7a-none-eabi/release/fbc-firmware fbc-firmware.bin"

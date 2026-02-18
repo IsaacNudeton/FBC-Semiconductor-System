@@ -1,0 +1,142 @@
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--bg-tertiary);
+  height: 48px;
+}
+
+.toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.toolbar-select {
+  background: var(--bg-primary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 6px 12px;
+  font-size: 13px;
+  min-width: 200px;
+  cursor: pointer;
+}
+
+.toolbar-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.toolbar-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toolbar-btn {
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-connect {
+  background: var(--accent);
+  color: #000;
+}
+
+.btn-connect:hover:not(:disabled) {
+  background: #5599ff;
+}
+
+.btn-disconnect {
+  background: var(--error);
+  color: #fff;
+}
+
+.btn-disconnect:hover:not(:disabled) {
+  background: #ff6666;
+}
+
+.btn-refresh {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.btn-refresh:hover:not(:disabled) {
+  background: #1a5080;
+}
+
+.toolbar-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-indicator.connected {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+}
+
+.status-indicator.disconnected {
+  background: #666;
+}
+
+.status-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.toolbar-error {
+  color: var(--error);
+  font-size: 12px;
+  padding: 4px 8px;
+  background: rgba(255, 68, 68, 0.1);
+  border-radius: 4px;
+}
+
+.toolbar-spacer {
+  flex: 1;
+}
+
+.toolbar-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.brand-text {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+.brand-version {
+  font-size: 11px;
+  color: var(--text-secondary);
+}

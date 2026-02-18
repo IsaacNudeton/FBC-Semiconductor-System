@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Layer 0: The Foundations</title>
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --bg-card: #12121a;
+            --accent: #6366f1;
+            --accent2: #8b5cf6;
+            --green: #10b981;
+            --yellow: #f59e0b;
+            --text: #e2e8f0;
+            --text-dim: #64748b;
+            --border: #1e293b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.8;
+            padding: 40px 20px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        .subtitle { color: var(--text-dim); font-size: 1.2rem; margin-bottom: 40px; }
+        .nav { margin-bottom: 40px; }
+        .nav a { color: var(--accent); text-decoration: none; }
+
+        .concept {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+        .concept h2 {
+            color: var(--accent);
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .concept h2 .num {
+            background: var(--accent);
+            color: #fff;
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1rem;
+        }
+
+        .eli5 {
+            font-size: 1.15rem;
+            margin-bottom: 20px;
+            padding: 20px;
+            background: rgba(99, 102, 241, 0.1);
+            border-radius: 12px;
+            border-left: 4px solid var(--accent);
+        }
+
+        .real-world {
+            padding: 20px;
+            background: rgba(245, 158, 11, 0.1);
+            border-radius: 12px;
+            border-left: 4px solid var(--yellow);
+            margin: 20px 0;
+        }
+        .real-world h4 { color: var(--yellow); margin-bottom: 10px; }
+
+        .diagram {
+            background: #000;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.9rem;
+            overflow-x: auto;
+            margin: 20px 0;
+            white-space: pre;
+        }
+
+        .builds-to {
+            text-align: center;
+            padding: 30px;
+            font-size: 1.3rem;
+            color: var(--green);
+        }
+
+        .key-point {
+            background: rgba(16, 185, 129, 0.1);
+            border-left: 4px solid var(--green);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 0 12px 12px 0;
+        }
+        .key-point strong { color: var(--green); }
+
+        .tech-term {
+            display: inline-block;
+            background: rgba(139, 92, 246, 0.2);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.9em;
+            color: var(--accent2);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav">
+            <a href="index.html">← Back to Learning Hub</a>
+        </div>
+
+        <h1>Layer 0: The Foundations</h1>
+        <p class="subtitle">Everything complex is built from simple pieces. Let's start from the beginning.</p>
+
+        <!-- Concept 1: The Switch -->
+        <div class="concept">
+            <h2><span class="num">1</span> It All Starts With a Switch</h2>
+
+            <div class="eli5">
+                Think about a light switch in your house. Flip it up = light ON. Flip it down = light OFF. That's it. ON or OFF. 1 or 0. Yes or No.
+                <br><br>
+                <strong>A computer is just billions of tiny switches.</strong> Instead of your finger flipping them, electricity flips them. And they flip really, really fast - billions of times per second.
+            </div>
+
+            <div class="real-world">
+                <h4>Real World Connection</h4>
+                The chip we're working with (Zynq 7020) has about <strong>1 billion</strong> of these tiny switches. If you flipped a light switch once per second, it would take you 31 YEARS to flip that many times. The chip does it every second.
+            </div>
+
+            <div class="key-point">
+                <strong>The technical name:</strong> <span class="tech-term">Transistor</span> - a switch with no moving parts. Electricity controls electricity.
+            </div>
+        </div>
+
+        <div class="builds-to">↓ Switches can make decisions ↓</div>
+
+        <!-- Concept 2: Making Decisions -->
+        <div class="concept">
+            <h2><span class="num">2</span> Switches That Make Decisions</h2>
+
+            <div class="eli5">
+                What if you connected two switches together and said: "The light only turns ON if BOTH switches are ON"?
+                <br><br>
+                Now you have a decision-maker. It's looking at two inputs and making a choice.
+            </div>
+
+            <div class="diagram">
+   Two switches controlling one light:
+
+   Switch A: OFF ○───┐
+                     ├───► Light: OFF
+   Switch B: OFF ○───┘
+
+   Switch A: ON  ●───┐
+                     ├───► Light: OFF (still off, need BOTH)
+   Switch B: OFF ○───┘
+
+   Switch A: ON  ●───┐
+                     ├───► Light: ON ✓ (both on!)
+   Switch B: ON  ●───┘
+            </div>
+
+            <div class="real-world">
+                <h4>Real World Connection</h4>
+                This is how your phone's lock screen works: Need BOTH the right face AND the right PIN? That's an "AND" decision. Need EITHER fingerprint OR passcode? That's an "OR" decision.
+            </div>
+
+            <div class="key-point">
+                <strong>The technical name:</strong> <span class="tech-term">Logic Gate</span> - a few switches connected to make a decision. Common ones: AND (need all), OR (need any), NOT (flip it).
+            </div>
+        </div>
+
+        <div class="builds-to">↓ Decisions create math ↓</div>
+
+        <!-- Concept 3: ON/OFF is Math -->
+        <div class="concept">
+            <h2><span class="num">3</span> ON and OFF = Numbers</h2>
+
+            <div class="eli5">
+                We decided to call ON = "1" and OFF = "0".
+                <br><br>
+                Now we can do math with switches! How? Count in a different way:
+                <br><br>
+                Instead of 0, 1, 2, 3, 4, 5... (which needs 10 symbols)
+                <br>
+                We use 0, 1, 10, 11, 100, 101... (only needs 2 symbols)
+            </div>
+
+            <div class="diagram">
+   How we normally count:          How computers count:
+
+   0 (zero)                        0
+   1 (one)                         1
+   2 (two)                         10     ← "one 2, zero 1s"
+   3 (three)                       11     ← "one 2, one 1"
+   4 (four)                        100    ← "one 4, zero 2s, zero 1s"
+   5 (five)                        101
+   ...
+   255                             11111111  (8 switches)
+
+
+   The letter "A" = 65 = 01000001 (8 switches in a pattern)
+   A photo = millions of these patterns for each pixel color
+            </div>
+
+            <div class="real-world">
+                <h4>Real World Connection</h4>
+                When you send a text message, your phone converts each letter to a pattern of 1s and 0s, sends those electrical ON/OFF signals through the air, and the other phone converts them back to letters.
+            </div>
+
+            <div class="key-point">
+                <strong>The technical name:</strong> <span class="tech-term">Binary</span> - counting with only 0 and 1. Each 0/1 is called a <span class="tech-term">bit</span>. Eight bits = one <span class="tech-term">byte</span>.
+            </div>
+        </div>
+
+        <div class="builds-to">↓ But switches forget instantly... ↓</div>
+
+        <!-- Concept 4: Remembering -->
+        <div class="concept">
+            <h2><span class="num">4</span> Switches That Remember</h2>
+
+            <div class="eli5">
+                Normal switches forget. The moment you stop pushing, they reset.
+                <br><br>
+                But what if a switch could HOLD its position? You push it to ON, let go, and it STAYS on until you push it to OFF.
+                <br><br>
+                <strong>That's memory.</strong> A switch that remembers what you told it.
+            </div>
+
+            <div class="diagram">
+   Normal wire:                   Memory switch:
+
+   Input ────────► Output        Input ──┬──► Output
+   (instant, forgets)                    │
+                                   Clock ─┘
+
+   Input changes?                 Only copies Input when
+   Output changes instantly      "Clock" says "NOW!"
+   No memory                     Then HOLDS that value
+
+
+   Like a camera:
+   - Normal wire = mirror (always showing right now)
+   - Memory switch = photograph (captures one moment, keeps it)
+            </div>
+
+            <div class="real-world">
+                <h4>Real World Connection</h4>
+                Your computer's RAM is billions of these memory switches. When you're writing a document, each letter is stored in these little "photograph" switches. When power goes off, they forget (that's why you save to disk).
+            </div>
+
+            <div class="key-point">
+                <strong>The technical name:</strong> <span class="tech-term">Flip-Flop</span> or <span class="tech-term">FF</span> - a switch that remembers 1 bit. Group 32 together = a <span class="tech-term">register</span> that remembers a number.
+            </div>
+        </div>
+
+        <div class="builds-to">↓ Now the magic: programmable switches ↓</div>
+
+        <!-- Concept 5: Programmable Logic -->
+        <div class="concept">
+            <h2><span class="num">5</span> The Cheat Sheet (LUT)</h2>
+
+            <div class="eli5">
+                Imagine you have a tiny filing cabinet with 16 drawers.
+                <br><br>
+                You give it 4 questions (like 4 yes/no switches), and it looks up the answer in the matching drawer.
+                <br><br>
+                <strong>The magic:</strong> You can PUT any answer in any drawer. So you can make this filing cabinet do ANY logic you want. Want it to be an AND gate? Put the right answers in. Want it to be an OR gate? Change the answers.
+            </div>
+
+            <div class="diagram">
+   A programmable "filing cabinet":
+
+   4 Inputs (questions):        Which drawer?     Answer in drawer:
+   A=0, B=0, C=0, D=0    ───►   Drawer 0    ───►  [You decide: 0 or 1]
+   A=0, B=0, C=0, D=1    ───►   Drawer 1    ───►  [You decide: 0 or 1]
+   A=0, B=0, C=1, D=0    ───►   Drawer 2    ───►  [You decide: 0 or 1]
+   ...
+   A=1, B=1, C=1, D=1    ───►   Drawer 15   ───►  [You decide: 0 or 1]
+
+   16 drawers total, each stores 0 or 1.
+   Change what's IN the drawers = change what the circuit DOES.
+            </div>
+
+            <div class="real-world">
+                <h4>Real World Connection</h4>
+                This is like a vending machine. The buttons you press (inputs) select a slot, and whatever is IN that slot (programmed contents) comes out. Different items in the slots = different output.
+            </div>
+
+            <div class="key-point">
+                <strong>The technical name:</strong> <span class="tech-term">LUT</span> = Look-Up Table. It "looks up" the answer based on inputs. A <span class="tech-term">LUT6</span> has 6 inputs and 64 drawers.
+            </div>
+        </div>
+
+        <div class="builds-to">↓ Thousands of LUTs = an FPGA ↓</div>
+
+        <!-- Concept 6: FPGA -->
+        <div class="concept">
+            <h2><span class="num">6</span> The FPGA: A Lego Set of Logic</h2>
+
+            <div class="eli5">
+                An FPGA is a chip with thousands of these programmable filing cabinets (LUTs) and memory switches (FFs), all connected by wires you can also program.
+                <br><br>
+                <strong>It's like a giant Lego set.</strong> The pieces are already there. You just decide how to connect them to build whatever you want.
+            </div>
+
+            <div class="diagram">
+   FPGA = A grid of programmable blocks + programmable wires
+
+   ┌─────────────────────────────────────────┐
+   │  ┌─────┐   ┌─────┐   ┌─────┐   ┌─────┐ │
+   │  │ LUT │═══│ LUT │═══│ LUT │═══│ LUT │ │ ← Programmable
+   │  │ +FF │   │ +FF │   │ +FF │   │ +FF │ │   wires connect
+   │  └──╬──┘   └──╬──┘   └──╬──┘   └──╬──┘ │   blocks together
+   │     ║         ║         ║         ║    │
+   │  ═══╬═════════╬═════════╬═════════╬═══ │
+   │     ║         ║         ║         ║    │
+   │  ┌──╬──┐   ┌──╬──┐   ┌──╬──┐   ┌──╬──┐ │
+   │  │ LUT │═══│ LUT │═══│ LUT │═══│ LUT │ │
+   │  │ +FF │   │ +FF │   │ +FF │   │ +FF │ │
+   │  └─────┘   └─────┘   └─────┘   └─────┘ │
+   │                                        │
+   │    ↕         ↕         ↕         ↕     │ ← Pins to outside
+   └─────────────────────────────────────────┘
+
+   Our chip: 53,200 LUTs + 106,400 FFs
+   (That's a LOT of Lego pieces)
+            </div>
+
+            <div class="key-point">
+                <strong>The technical name:</strong> <span class="tech-term">FPGA</span> = Field Programmable Gate Array. "Field programmable" = you program it after it's made (not at the factory).
+            </div>
+        </div>
+
+        <div class="builds-to">↓ But how do you program it? ↓</div>
+
+        <!-- Concept 7: Bitstream -->
+        <div class="concept">
+            <h2><span class="num">7</span> The Recipe File (Bitstream)</h2>
+
+            <div class="eli5">
+                A bitstream is like a recipe that tells every LUT what to put in its drawers, and every wire whether to connect or not.
+                <br><br>
+                It's just a big file of 1s and 0s. Load it into the chip, and the chip BECOMES your circuit.
+            </div>
+
+            <div class="diagram">
+   The process:
+
+   Your idea                 Toolchain              Bitstream           FPGA
+   "I want a                software that          A recipe file:      Now your
+    calculator"             figures out            "LUT at X,Y:        calculator
+        │                   which LUTs,             put 01101001        exists as
+        │                   which wires             in drawers.         real
+        ▼                       │                   Wire A→B: ON"       hardware!
+   ┌─────────┐                  ▼                      │
+   │ Verilog │  ───────►   ┌─────────┐   ───────►     │    ───────►   ┌──────┐
+   │  Code   │             │ Our     │                ▼               │ FPGA │
+   │         │             │Toolchain│           [millions           │ Chip │
+   └─────────┘             └─────────┘            of bits]           └──────┘
+            </div>
+
+            <div class="real-world">
+                <h4>What We Built</h4>
+                Normally you need Xilinx's software (Vivado, 30GB) to create this recipe file. We built our own toolchain that creates the same recipe, and we learned the format by studying examples (ONETWO method).
+            </div>
+
+            <div class="key-point">
+                <strong>The technical name:</strong> <span class="tech-term">Bitstream</span> = the configuration file. <span class="tech-term">.bit</span> file extension. Ours is about 3MB for the full design.
+            </div>
+        </div>
+
+        <!-- Summary -->
+        <div class="concept" style="border: 2px solid var(--green);">
+            <h2><span class="num">✓</span> The Complete Picture</h2>
+
+            <div class="diagram" style="font-size: 1rem;">
+   Level 1: Switches (transistors)
+            ↓
+   Level 2: Decisions (logic gates - AND, OR, NOT)
+            ↓
+   Level 3: Numbers (binary - 1s and 0s)
+            ↓
+   Level 4: Memory (flip-flops - remembering)
+            ↓
+   Level 5: Programmable logic (LUTs - the filing cabinet)
+            ↓
+   Level 6: The chip (FPGA - thousands of LUTs + wires)
+            ↓
+   Level 7: The recipe (bitstream - tells chip what to become)
+            ↓
+   Level 8: Your circuit running as real hardware!
+            </div>
+
+            <div class="eli5" style="background: rgba(16, 185, 129, 0.1); border-color: var(--green);">
+                <strong>The key insight:</strong> Everything you see on a computer - from a calculator to video calls to AI - is just billions of tiny switches flipping ON and OFF in patterns. The complexity comes from having SO MANY of them working together, so fast.
+            </div>
+        </div>
+
+        <div class="nav" style="margin-top: 40px; text-align: center;">
+            <a href="layer1_fpga_basics.html">Next: Layer 1 - FPGA Basics →</a>
+        </div>
+    </div>
+</body>
+</html>

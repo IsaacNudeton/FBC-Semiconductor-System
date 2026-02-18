@@ -1,0 +1,378 @@
+/* BoardLayoutView.css - Schematic-style board visualization */
+
+.board-layout-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: linear-gradient(180deg, #0f172a, #1e293b);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* Controls */
+.layout-controls {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 12px 16px;
+    background: rgba(0, 0, 0, 0.3);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.zoom-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.zoom-controls button {
+    width: 28px;
+    height: 28px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.zoom-controls button:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.zoom-controls span {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    min-width: 40px;
+    text-align: center;
+}
+
+.view-modes {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mode-label {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.mode-chip {
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.mode-chip.active {
+    background: rgba(74, 222, 128, 0.2);
+    color: #4ade80;
+}
+
+.error-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    padding: 6px 12px;
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    border-radius: 6px;
+    font-size: 12px;
+    color: #fca5a5;
+}
+
+/* Board Canvas */
+.board-canvas {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    transform-origin: center center;
+    transition: transform 0.2s;
+}
+
+.board-svg {
+    width: 100%;
+    height: 100%;
+}
+
+/* Board Outline */
+.board-outline {
+    fill: #1a365d;
+    stroke: #4a5568;
+    stroke-width: 2;
+}
+
+/* Connectors */
+.connector-outline {
+    fill: rgba(50, 50, 50, 0.6);
+    stroke: #6b7280;
+    stroke-width: 1.5;
+    stroke-dasharray: 4 2;
+}
+
+.connector-label {
+    fill: rgba(255, 255, 255, 0.5);
+    font-size: 10px;
+    text-anchor: middle;
+    font-family: 'Inter', sans-serif;
+}
+
+/* Components */
+.component-outline {
+    fill: #2d3748;
+    stroke: #4a5568;
+    stroke-width: 1;
+}
+
+.component-outline.zynq {
+    fill: #1e40af;
+    stroke: #3b82f6;
+    stroke-width: 2;
+}
+
+.component-outline.gem {
+    fill: #065f46;
+    stroke: #10b981;
+}
+
+.component-outline.ddr3 {
+    fill: #4c1d95;
+    stroke: #8b5cf6;
+}
+
+.component-label {
+    fill: rgba(255, 255, 255, 0.8);
+    font-size: 9px;
+    text-anchor: middle;
+    dominant-baseline: middle;
+    font-family: 'Inter', sans-serif;
+}
+
+/* Pins */
+.pin-dot {
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.pin-dot.bim {
+    fill: rgba(96, 165, 250, 0.4);
+    stroke: rgba(96, 165, 250, 0.6);
+    stroke-width: 1;
+}
+
+.pin-dot.fast {
+    fill: rgba(192, 132, 252, 0.4);
+    stroke: rgba(192, 132, 252, 0.6);
+    stroke-width: 1;
+}
+
+.pin-dot:hover {
+    transform: scale(1.5);
+}
+
+.pin-dot.error {
+    fill: #ef4444;
+    stroke: #fca5a5;
+    stroke-width: 2;
+}
+
+/* Error Pin Animation */
+.error-pin-group {
+    cursor: pointer;
+}
+
+.error-pulse {
+    fill: none;
+    stroke: #ef4444;
+    stroke-width: 2;
+    opacity: 0;
+    animation: error-pulse 1.5s ease-out infinite;
+}
+
+@keyframes error-pulse {
+    0% {
+        r: 6;
+        opacity: 0.8;
+    }
+
+    100% {
+        r: 20;
+        opacity: 0;
+    }
+}
+
+.error-dot {
+    fill: #ef4444;
+    stroke: white;
+    stroke-width: 2;
+    cursor: pointer;
+    filter: drop-shadow(0 0 6px rgba(239, 68, 68, 0.8));
+}
+
+.error-dot:hover {
+    r: 8;
+}
+
+.error-pin-label {
+    fill: white;
+    font-size: 9px;
+    font-weight: 600;
+    text-anchor: middle;
+    font-family: monospace;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+/* Error Trace Lines */
+.error-trace {
+    stroke: rgba(239, 68, 68, 0.3);
+    stroke-width: 1;
+    stroke-dasharray: 4 4;
+    animation: trace-flow 1s linear infinite;
+}
+
+@keyframes trace-flow {
+    from {
+        stroke-dashoffset: 0;
+    }
+
+    to {
+        stroke-dashoffset: 8;
+    }
+}
+
+/* Selected Pin */
+.selected-ring {
+    fill: none;
+    stroke: #4ade80;
+    stroke-width: 3;
+    opacity: 0.8;
+    animation: selected-pulse 1s ease-in-out infinite;
+}
+
+@keyframes selected-pulse {
+
+    0%,
+    100% {
+        opacity: 0.8;
+        r: 16;
+    }
+
+    50% {
+        opacity: 0.4;
+        r: 20;
+    }
+}
+
+.selected-pointer {
+    stroke: #4ade80;
+    stroke-width: 2;
+}
+
+/* Tooltip */
+.pin-tooltip {
+    position: absolute;
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    padding: 8px 12px;
+    pointer-events: none;
+    z-index: 100;
+    transform: translateX(-50%);
+    min-width: 140px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.tooltip-header {
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+    margin-bottom: 6px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tooltip-body {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.tooltip-body div {
+    margin: 2px 0;
+}
+
+.tooltip-body strong {
+    color: white;
+}
+
+.tooltip-error {
+    color: #fca5a5;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Legend */
+.layout-legend {
+    display: flex;
+    gap: 20px;
+    padding: 10px 16px;
+    background: rgba(0, 0, 0, 0.2);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.layout-legend .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.layout-legend .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.layout-legend .legend-dot.bim {
+    background: rgba(96, 165, 250, 0.6);
+    border: 1px solid #60a5fa;
+}
+
+.layout-legend .legend-dot.fast {
+    background: rgba(192, 132, 252, 0.6);
+    border: 1px solid #c084fc;
+}
+
+.layout-legend .legend-dot.error {
+    background: #ef4444;
+    border: 1px solid white;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.8);
+}
+
+.layout-legend .legend-dot.selected {
+    background: #4ade80;
+    border: 1px solid white;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .layout-controls {
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .error-summary {
+        margin-left: 0;
+        width: 100%;
+        justify-content: center;
+    }
+
+    .layout-legend {
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+}

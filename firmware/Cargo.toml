@@ -1,0 +1,40 @@
+[package]
+name = "fbc-firmware"
+version = "0.1.0"
+edition = "2021"
+authors = ["Isaac Nudeton <isaac@iselabs.com>"]
+description = "Bare metal firmware for FBC Semiconductor System (Zynq 7020)"
+license = "Proprietary"
+
+[lib]
+name = "fbc_firmware"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fbc-firmware"
+path = "src/main.rs"
+
+[dependencies]
+# Embedded basics
+# Note: cortex-a removed - not needed, using raw volatile pointer access
+# Note: embedded-hal removed - not needed for bare metal memory-mapped I/O
+volatile-register = "0.2"  # Memory-mapped register access (optional, not currently used)
+
+# Note: smoltcp removed - using custom minimal TCP/IP stack in net.rs
+# Can be added back when full TCP/IP stack is needed
+
+# Panic handling
+panic-halt = "0.2"
+
+[profile.release]
+opt-level = "s"      # Optimize for size
+lto = true           # Link-time optimization
+codegen-units = 1    # Better optimization
+debug = true         # Keep debug symbols
+
+[profile.dev]
+opt-level = 1        # Some optimization even in debug
+
+[features]
+default = []
+debug-uart = []      # Enable UART debug output

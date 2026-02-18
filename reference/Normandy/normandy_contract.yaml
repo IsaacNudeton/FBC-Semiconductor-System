@@ -1,0 +1,125 @@
+# Normandy S0031 - Microsoft Braga Device
+# Power delivery board for burn-in testing
+# Generated from S0031 Normandy_BIM_Design_r0.7.xlsx
+
+interface_contract:
+  name: "Normandy S0031 BIM"
+  version: "0.7"
+
+  system_side:
+    power:
+      voltage: 12.0
+      voltage_min: 10.8
+      voltage_max: 13.2
+      current_available: 500.0
+    platform: "hpbi"
+
+  device_side:
+    # Total power budget: ~500A across all rails
+    power:
+      voltage: 1.0          # Average Vout
+      current: 500.0        # Total current budget
+      tolerance: 0.05
+    rails:
+      # CORE rails - highest current
+      - name: "VENG"
+        voltage: 1.10
+        tolerance: 0.05
+        current: 350.0
+        priority: 2
+        depends_on: ["VIO1P2"]
+
+      - name: "VCONST"
+        voltage: 1.00
+        tolerance: 0.05
+        current: 50.0
+        priority: 3
+        depends_on: ["VENG"]
+
+      # HCPS rails (40A max per channel)
+      - name: "VRAM"
+        voltage: 1.25
+        tolerance: 0.05
+        current: 25.0
+        priority: 4
+        depends_on: ["VCONST"]
+
+      - name: "VHBMD"
+        voltage: 1.02
+        tolerance: 0.05
+        current: 10.0
+        priority: 5
+        depends_on: ["VRAM"]
+
+      - name: "VPAM4A"
+        voltage: 0.95
+        tolerance: 0.05
+        current: 13.0
+        priority: 6
+        depends_on: ["VHBMD"]
+
+      - name: "VPCI0P75"
+        voltage: 0.95
+        tolerance: 0.05
+        current: 7.0
+        priority: 7
+        depends_on: ["VPAM4A"]
+
+      - name: "VHBM_1p1"
+        voltage: 1.30
+        tolerance: 0.05
+        current: 25.0
+        priority: 9
+        depends_on: ["VPCI1P2"]
+
+      - name: "VPAM4IO"
+        voltage: 1.32
+        tolerance: 0.05
+        current: 14.0
+        priority: 13
+        depends_on: ["VHBM_0P4"]
+
+      # LCPS rails (12A max per channel)
+      - name: "VIO1P2"
+        voltage: 1.32
+        tolerance: 0.05
+        current: 1.0
+        priority: 1
+        depends_on: []
+
+      - name: "VPCI1P2"
+        voltage: 1.32
+        tolerance: 0.05
+        current: 2.0
+        priority: 8
+        depends_on: ["VPCI0P75"]
+
+      - name: "VPLLHV1P2"
+        voltage: 1.32
+        tolerance: 0.05
+        current: 2.0
+        priority: 10
+        depends_on: ["VHBM_1p1"]
+
+      - name: "VHBM_1P8"
+        voltage: 1.98
+        tolerance: 0.05
+        current: 1.0
+        priority: 11
+        depends_on: ["VPLLHV1P2"]
+
+      - name: "VHBM_0P4"
+        voltage: 0.55
+        tolerance: 0.05
+        current: 1.0
+        priority: 12
+        depends_on: ["VHBM_1P8"]
+
+  system_constraints:
+    thermal:
+      ambient_max: 125.0
+      airflow: 0.5
+    board:
+      dimensions: [200.0, 150.0]
+      layers: 8
+      thickness: 2.4

@@ -1,0 +1,71 @@
+Design Rule Check Report
+------------------------
+
+Report Written:     Monday, February 04, 2019
+Design Path:        C:\Users\lance\Dropbox\Volt\Quad Board\QuadPowerDist04Dec2018.pcb
+Design Title:       
+Created:            11/25/2013 4:20:32 PM
+Last Saved:         12/10/2018 11:17:55 AM
+Editing Time:       35284 min
+Units:              mil (precision 1)
+
+
+Results
+=======
+
+Component to Board error (Cm-B) at (4185.0 8332.0) on layer "[Top]".
+    J7.
+Component to Component error (Cm-Cm) at (5128.5 8009.0) on layer "[Top]".
+    J7 - C3, Gap is 0.0.
+Component to Component error (Cm-Cm) at (13441.5 8009.0) on layer "[Top]".
+    C1 - J5, Gap is 0.0.
+Component to Board error (Cm-B) at (12585.0 8332.0) on layer "[Top]".
+    J5.
+
+Number of errors found : 4
+
+
+Settings
+========
+
+
+Spacings
+
+=========
+
+Tracks        Yes
+Pads and Vias Yes
+Shapes        Yes
+Text          Yes
+Board         Yes
+Drills        Yes
+Components    Yes
+
+
+Manufacturing
+
+==============
+
+Drill Breakout                  No
+Drill Backoff                   No
+Silkscreen Overlap              No
+Copper Text In Board            No
+Min Track Width                 No
+Min Annular Ring                No
+Min Paste Size                  No
+Vias In Pads                    No
+Unplated Vias                   No
+Unplated Pads With Inner Tracks No
+
+
+Nets
+
+=====
+
+Net Completion               Yes
+Dangling Tracks              No
+Net Track Length Differences No
+
+
+
+End Of Report.

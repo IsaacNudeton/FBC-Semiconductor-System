@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Layer 6: Firmware Architecture | FBC Learning</title>
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --bg-card: #12121a;
+            --bg-hover: #1a1a25;
+            --accent: #6366f1;
+            --accent2: #8b5cf6;
+            --green: #10b981;
+            --yellow: #f59e0b;
+            --red: #ef4444;
+            --text: #e2e8f0;
+            --text-dim: #64748b;
+            --border: #1e293b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 40px 20px; }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--accent);
+            text-decoration: none;
+            margin-bottom: 30px;
+        }
+        .back-link:hover { text-decoration: underline; }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle { color: var(--text-dim); font-size: 1.1rem; margin-bottom: 40px; }
+
+        h2 {
+            font-size: 1.5rem;
+            margin: 40px 0 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+        h3 { font-size: 1.2rem; margin: 25px 0 15px; color: var(--accent); }
+
+        p { margin-bottom: 15px; }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 25px;
+            margin: 20px 0;
+        }
+
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .comparison-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .comparison-card.old { border-left: 3px solid var(--red); }
+        .comparison-card.new { border-left: 3px solid var(--green); }
+        .comparison-card h4 {
+            font-size: 1rem;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .comparison-card.old h4 { color: var(--red); }
+        .comparison-card.new h4 { color: var(--green); }
+
+        pre {
+            background: #0d0d12;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            overflow-x: auto;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.85rem;
+            line-height: 1.6;
+            margin: 15px 0;
+        }
+        code {
+            font-family: 'Fira Code', monospace;
+            background: rgba(99, 102, 241, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        pre code { background: none; padding: 0; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            background: var(--bg-card);
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            font-size: 0.8rem;
+        }
+        tr:hover td { background: var(--bg-hover); }
+
+        .highlight { background: rgba(99, 102, 241, 0.1); padding: 2px 6px; border-radius: 4px; }
+        .good { color: var(--green); }
+        .bad { color: var(--red); }
+        .warn { color: var(--yellow); }
+
+        .flow-diagram {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin: 30px 0;
+            padding: 30px;
+            background: var(--bg-card);
+            border-radius: 12px;
+        }
+        .flow-box {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 15px 20px;
+            text-align: center;
+            min-width: 120px;
+        }
+        .flow-box.highlight-box {
+            border-color: var(--accent);
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.2);
+        }
+        .flow-arrow { font-size: 1.5rem; color: var(--text-dim); }
+
+        .nav-buttons {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 60px;
+            padding-top: 30px;
+            border-top: 1px solid var(--border);
+        }
+        .nav-btn {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 15px 25px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .nav-btn:hover {
+            border-color: var(--accent);
+            background: var(--bg-hover);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="index.html" class="back-link">← Back to Learning Hub</a>
+
+        <h1>Layer 6: Firmware Architecture</h1>
+        <p class="subtitle">Linux (2016) vs Bare-Metal Rust (2026) - Why and How</p>
+
+        <h2>The Problem with Linux</h2>
+
+        <p>The current Sonoma system runs <strong>PetaLinux</strong> on the Zynq ARM cores. While this provides a familiar environment, it introduces significant overhead:</p>
+
+        <div class="comparison-grid">
+            <div class="comparison-card old">
+                <h4>Linux Approach (2016)</h4>
+                <ul>
+                    <li>Boot time: <span class="bad">10-30 seconds</span></li>
+                    <li>Stack: FSBL → U-Boot → Linux → Shell → ELF binaries</li>
+                    <li>IPC: Files in /tmp with flock</li>
+                    <li>Each operation spawns new process</li>
+                    <li>AWK scripts orchestrate everything</li>
+                    <li>~30 ELF binaries for hardware access</li>
+                </ul>
+            </div>
+            <div class="comparison-card new">
+                <h4>Bare-Metal Approach (2026)</h4>
+                <ul>
+                    <li>Boot time: <span class="good">&lt;100 milliseconds</span></li>
+                    <li>Stack: FSBL → Your code (direct)</li>
+                    <li>IPC: Shared memory / direct calls</li>
+                    <li>Single binary, no process spawning</li>
+                    <li>Rust firmware with HAL</li>
+                    <li>Direct register access</li>
+                </ul>
+            </div>
+        </div>
+
+        <h2>Current Linux Firmware Structure</h2>
+
+        <h3>Boot Sequence (init.sh)</h3>
+        <pre><code># 1. Load FPGA bitstream
+cat /mnt/top.bit > /dev/xdevcfg
+sleep 3
+
+# 2. Set MAC address
+/mnt/ResetMac.awk
+
+# 3. Wake CPU1
+/mnt/bin/linux_cpu1_wakeup.elf
+
+# 4. Power down all I/O banks
+/mnt/bin/linux_IO_PS.elf 0 0 0 0
+
+# 5. Power down all PSUs (loop through 99!)
+for i in $(seq 1 99); do
+    /mnt/bin/linux_pmbus_OFF.elf $i 0
+done
+
+# 6. Zero all DACs
+/mnt/bin/linux_EXT_DAC.elf 0 0 0 0 0 0 0 0 0 0
+
+# 7. Initialize XADC
+/mnt/bin/linux_init_XADC.elf
+
+# 8. Start network monitor
+/mnt/net_monitor.sh</code></pre>
+
+        <h3>Three Main Threads</h3>
+
+        <div class="flow-diagram">
+            <div class="flow-box">
+                <strong>HPBI.elf</strong><br>
+                <small>Coordinator</small>
+            </div>
+            <div class="flow-arrow">↔</div>
+            <div class="flow-box highlight-box">
+                <strong>RunVectors</strong><br>
+                <small>AWK Script</small>
+            </div>
+            <div class="flow-arrow">↔</div>
+            <div class="flow-box highlight-box">
+                <strong>ReadAnalog</strong><br>
+                <small>AWK Script</small>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Thread</th>
+                    <th>Purpose</th>
+                    <th>IPC Method</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>HPBI.elf</code></td>
+                    <td>Watchdog, coordinator, shutdown handler</td>
+                    <td>/tmp/Shutdown file</td>
+                </tr>
+                <tr>
+                    <td><code>RunVectors</code></td>
+                    <td>Test step execution, power sequencing, vector loading</td>
+                    <td>/tmp/VectorName, /tmp/JobStatus</td>
+                </tr>
+                <tr>
+                    <td><code>ReadAnalog</code></td>
+                    <td>Continuous ADC/XADC/PMBus sampling, limit checking</td>
+                    <td>/tmp/TemperatureLimits, /tmp/LockBit (flock)</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>The ELF Binary Zoo</h3>
+
+        <p>Every hardware operation spawns a new ELF binary:</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Binary</th>
+                    <th>Purpose</th>
+                    <th>Bare-Metal Equivalent</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>linux_XADC.elf</code></td>
+                    <td>Read FPGA ADCs</td>
+                    <td><code>xadc.read_all()</code></td>
+                </tr>
+                <tr>
+                    <td><code>linux_EXT_ADC.elf</code></td>
+                    <td>Read external ADCs</td>
+                    <td><code>spi.read_adc()</code></td>
+                </tr>
+                <tr>
+                    <td><code>linux_EXT_DAC.elf</code></td>
+                    <td>Write DACs</td>
+                    <td><code>spi.write_dac()</code></td>
+                </tr>
+                <tr>
+                    <td><code>linux_pmbus_PicoDlynx.elf</code></td>
+                    <td>Control power supplies</td>
+                    <td><code>pmbus.set_voltage()</code></td>
+                </tr>
+                <tr>
+                    <td><code>linux_set_temperature.elf</code></td>
+                    <td>Set thermal setpoint</td>
+                    <td><code>thermal.set_target()</code></td>
+                </tr>
+                <tr>
+                    <td><code>linux_load_vectors.elf</code></td>
+                    <td>Load vectors to BRAM</td>
+                    <td><code>dma.transfer()</code></td>
+                </tr>
+                <tr>
+                    <td><code>linux_VICOR.elf</code></td>
+                    <td>Control Vicor core supplies</td>
+                    <td><code>dac.write() + gpio.set()</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>Hardware Interfaces</h2>
+
+        <h3>Zynq Peripheral Base Addresses</h3>
+
+        <pre><code>// Critical peripherals for bare-metal
+const I2C0_BASE: u32 = 0xE000_4000;  // PMBus power supplies
+const I2C1_BASE: u32 = 0xE000_5000;  // PMBus power supplies
+const SPI0_BASE: u32 = 0xE000_6000;  // External ADC/DAC
+const SPI1_BASE: u32 = 0xE000_7000;  // External ADC/DAC
+const GPIO_BASE: u32 = 0xE000_A000;  // MIO pins (core enables)
+const XADC_BASE: u32 = 0xF800_7100;  // FPGA temp/voltage
+const SLCR_BASE: u32 = 0xF800_0000;  // System Level Control
+const DEVCFG_BASE: u32 = 0xF800_7000; // FPGA programming</code></pre>
+
+        <h3>PMBus Communication</h3>
+
+        <p>The current system uses <span class="bad">hardcoded I2C addresses</span> for power supplies. This requires manual reconfiguration when swapping hardware.</p>
+
+        <div class="card">
+            <h4>Current Problem</h4>
+            <pre><code># Loop through addresses 1-99 blindly
+for i in $(seq 1 99); do
+    /mnt/bin/linux_pmbus_OFF.elf $i 0  # Hope it exists
+done</code></pre>
+
+            <h4 style="margin-top: 20px;">Better Approach: Auto-Discovery</h4>
+            <pre><code>fn discover_pmbus_devices() -> Vec&lt;PmbusDevice&gt; {
+    let mut devices = Vec::new();
+    for addr in 0x10..0x7F {
+        if let Ok(mfr_id) = i2c.read_byte(addr, PMBUS_MFR_ID) {
+            let device_type = match mfr_id {
+                0x41 => DeviceType::MPS,
+                0x49 => DeviceType::Infineon,
+                0x56 => DeviceType::Vicor,
+                _ => DeviceType::Unknown,
+            };
+            devices.push(PmbusDevice { addr, device_type });
+        }
+    }
+    devices
+}</code></pre>
+        </div>
+
+        <h3>Temperature Control</h3>
+
+        <p>Two temperature sensor types with different formulas:</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Type</th>
+                    <th>Sensor</th>
+                    <th>Formula</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Diode (Formula 2)</td>
+                    <td>Linear diode</td>
+                    <td><code>T = (1.02 * V / 0.004) - 273.15</code></td>
+                </tr>
+                <tr>
+                    <td>Case (Formula 3)</td>
+                    <td>NTC thermistor</td>
+                    <td><code>RT = (4980 * (4.096/V)) - 4980 - 150</code><br>
+                        <code>T = 1/((ln(RT/R25C)/B) + 1/298.15) - 273.15</code></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>Where:</p>
+        <ul>
+            <li>R25C = 10000Ω → B = 3492.0</li>
+            <li>R25C = 30000Ω → B = 3985.3</li>
+        </ul>
+
+        <h2>Bare-Metal Firmware Architecture</h2>
+
+        <h3>Memory Map</h3>
+
+        <pre><code>// Zynq 7020 Memory Layout for Bare-Metal
+0x0000_0000 - 0x0002_FFFF : OCM (192KB) - Boot code runs here
+0x0010_0000 - 0x3FFF_FFFF : DDR (1GB) - Vectors, data buffers
+0xE000_0000 - 0xE000_FFFF : APB peripherals (UART, I2C, SPI, GPIO)
+0xF800_0000 - 0xF800_0FFF : SLCR (System Level Control)
+0x4000_0000 - 0x7FFF_FFFF : PL AXI (FPGA registers)</code></pre>
+
+        <h3>Module Structure (Current)</h3>
+
+        <pre><code>firmware/
+├── src/
+│   ├── main.rs           # Entry point, main loop ✓
+│   ├── lib.rs            # Library with HAL re-exports ✓
+│   ├── analog.rs         # Unified 32ch analog monitor ✓
+│   ├── fbc_protocol.rs   # Packet formats (HEARTBEAT, STATUS, ERROR) ✓
+│   ├── regs.rs           # FPGA register definitions ✓
+│   └── hal/
+│       ├── mod.rs
+│       ├── i2c.rs        # I2C driver (for PMBus) ✓
+│       ├── spi.rs        # SPI driver (for ADC/DAC) ✓
+│       ├── gpio.rs       # GPIO driver (MIO pins) ✓
+│       ├── xadc.rs       # XADC driver (FPGA ADC) ✓
+│       ├── uart.rs       # UART driver (debug) ✓
+│       ├── pmbus.rs      # PMBus protocol ✓
+│       ├── pcap.rs       # FPGA programming ✓
+│       ├── slcr.rs       # System control ✓
+│       ├── thermal.rs    # ONETWO thermal control ✓
+│       ├── eeprom.rs     # 24LC02 EEPROM (256B) ✓
+│       ├── dna.rs        # Device DNA (unique ID) ✓
+│       ├── max11131.rs   # External ADC (16ch, 12-bit) ✓
+│       ├── bu2505.rs     # External DAC (10ch, 10-bit) ✓
+│       └── vicor.rs      # VICOR 6-core supply ✓
+├── link.ld               # Linker script
+└── Cargo.toml</code></pre>
+
+        <h3>Example: Direct XADC Access</h3>
+
+        <div class="comparison-grid">
+            <div class="comparison-card old">
+                <h4>Linux (current)</h4>
+                <pre><code># Spawn process, context switch
+/mnt/bin/linux_XADC.elf
+# Output: 0.0515 0.2786 ...</code></pre>
+            </div>
+            <div class="comparison-card new">
+                <h4>Bare-Metal (new)</h4>
+                <pre><code>fn read_xadc_temp() -> f32 {
+    let raw = unsafe {
+        read_volatile(
+            (XADC_BASE + 0x200) as *const u32
+        )
+    };
+    // Convert to Celsius
+    let code = (raw >> 4) as f32;
+    (code / 4096.0) * 503.975 - 273.15
+}</code></pre>
+            </div>
+        </div>
+
+        <h2>Performance Comparison</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>Linux</th>
+                    <th>Bare-Metal</th>
+                    <th>Improvement</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Boot time</td>
+                    <td class="bad">10-30s</td>
+                    <td class="good">&lt;100ms</td>
+                    <td>100-300x</td>
+                </tr>
+                <tr>
+                    <td>ADC sample loop</td>
+                    <td class="bad">~500ms</td>
+                    <td class="good">&lt;10ms</td>
+                    <td>50x</td>
+                </tr>
+                <tr>
+                    <td>PMBus read</td>
+                    <td class="bad">~50ms (ELF spawn)</td>
+                    <td class="good">&lt;1ms</td>
+                    <td>50x</td>
+                </tr>
+                <tr>
+                    <td>IPC overhead</td>
+                    <td class="bad">flock + file I/O</td>
+                    <td class="good">None (direct)</td>
+                    <td>Eliminated</td>
+                </tr>
+                <tr>
+                    <td>Memory footprint</td>
+                    <td class="warn">~64MB (kernel + rootfs)</td>
+                    <td class="good">&lt;1MB</td>
+                    <td>64x smaller</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>Key Takeaways</h2>
+
+        <div class="card">
+            <h4>What We Keep from Linux</h4>
+            <ul>
+                <li>PMBus protocol (standard, well-documented)</li>
+                <li>Temperature conversion formulas (calibrated)</li>
+                <li>XADC access method (works well)</li>
+                <li>Test plan structure (PU_LIST, test steps)</li>
+            </ul>
+
+            <h4 style="margin-top: 20px;">What We Eliminate</h4>
+            <ul>
+                <li>File-based IPC (/tmp files, flock)</li>
+                <li>Shell scripts (AWK, bash)</li>
+                <li>ELF spawning for every operation</li>
+                <li>Linux kernel overhead</li>
+                <li>Hardcoded PMBus addresses</li>
+            </ul>
+
+            <h4 style="margin-top: 20px;">What We Add</h4>
+            <ul>
+                <li>PMBus auto-discovery <span class="warn">⚠ Planned</span></li>
+                <li>ONETWO thermal control (no tuning needed) <span class="good">✓ Done</span></li>
+                <li>Pattern-aware thermal feedforward <span class="good">✓ Done</span></li>
+                <li>Direct register access HAL <span class="good">✓ Done</span></li>
+                <li>Type-safe Rust drivers <span class="good">✓ Done</span></li>
+                <li>Deterministic timing <span class="good">✓ Done</span></li>
+                <li>Raw Ethernet (0x88B5) protocol <span class="good">✓ Done</span></li>
+                <li>Flight Recorder (SD card logging) <span class="good">✓ Done</span></li>
+                <li>External ADC/DAC support (MAX11131/BU2505) <span class="good">✓ Done</span></li>
+                <li>VICOR core supply control <span class="good">✓ Done</span></li>
+            </ul>
+        </div>
+
+        <h2>Reference Documents</h2>
+
+        <ul>
+            <li><code>reference/FIRMWARE_REFERENCE.md</code> - Full Linux firmware analysis</li>
+            <li><code>reference/ZYNQ_REGISTER_MAP.md</code> - Peripheral addresses and registers</li>
+            <li><code>docs/FIRMWARE_API_FOR_GUI.md</code> - Complete firmware API reference</li>
+            <li><code>docs/OPERATIONAL_WORKFLOW.md</code> - How the system operates</li>
+            <li><code>docs/LEARNING_GUIDE.md</code> - Comprehensive system overview</li>
+            <li><code>firmware/</code> - Bare-metal Rust project</li>
+            <li><a href="layer6b_hal.html">Layer 6B: HAL Details</a> - All HAL modules</li>
+            <li><a href="layer6c_thermal.html">Layer 6C: ONETWO Thermal</a> - Thermal controller with pattern feedforward</li>
+        </ul>
+
+        <div class="nav-buttons">
+            <a href="layer5_vector_engine.html" class="nav-btn">← Layer 5: Vector Engine</a>
+            <a href="layer7_pmbus.html" class="nav-btn">Layer 7: PMBus Protocol →</a>
+        </div>
+    </div>
+</body>
+</html>

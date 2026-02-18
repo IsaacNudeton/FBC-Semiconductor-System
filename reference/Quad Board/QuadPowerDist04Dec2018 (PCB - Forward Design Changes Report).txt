@@ -1,0 +1,35 @@
+Forward Design Changes Report
+-----------------------------
+
+Report Written:     Friday, December 07, 2018
+Design Path:        C:\Users\lance\Dropbox\Volt\Quad Board\QuadPowerDist04Dec2018.pcb
+Design Title:       
+Created:            11/25/2013 4:20:32 PM
+Last Saved:         12/7/2018 1:39:06 PM
+Editing Time:       35245 min
+Units:              mil (precision 1)
+
+Added component reference "PL10" of component "3WP", package "DSC".
+Added component reference "PL11" of component "3WP", package "DSC".
+Added component reference "PL12" of component "3WP", package "DSC".
+Added component reference "PL13" of component "3WP", package "DSC".
+Added component reference "PL14" of component "3WP", package "DSC".
+
+Connected pin "PL10.1" to net "GND".
+Connected pin "PL10.2" to net "+12V2".
+Connected pin "PL10.3" to net "GND".
+Connected pin "PL11.1" to net "GND".
+Connected pin "PL11.2" to net "+12V1".
+Connected pin "PL11.3" to net "GND".
+Connected pin "PL12.1" to net "GND".
+Connected pin "PL12.2" to net "+12V1".
+Connected pin "PL12.3" to net "GND".
+Connected pin "PL13.1" to net "GND".
+Connected pin "PL13.2" to net "+12V2".
+Connected pin "PL13.3" to net "GND".
+Connected pin "PL14.1" to net "GND".
+Connected pin "PL14.2" to net "+12V1".
+Connected pin "PL14.3" to net "GND".
+
+
+End Of Report.

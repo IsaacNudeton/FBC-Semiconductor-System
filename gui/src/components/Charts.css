@@ -1,0 +1,311 @@
+/* Charts.css - Styling for chart components */
+
+.line-chart {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 8px;
+    backdrop-filter: blur(10px);
+}
+
+.line-chart canvas {
+    display: block;
+    border-radius: 4px;
+}
+
+.multi-series-chart {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 8px;
+    backdrop-filter: blur(10px);
+}
+
+.multi-series-chart canvas {
+    display: block;
+    border-radius: 4px;
+}
+
+/* Waveform Viewer */
+.waveform-viewer {
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(15, 23, 42, 0.95));
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.waveform-viewer canvas {
+    display: block;
+    cursor: crosshair;
+}
+
+.waveform-controls {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.waveform-controls button {
+    padding: 6px 12px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.waveform-controls button:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.waveform-controls .cycle-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.waveform-controls .cycle-input label {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 12px;
+}
+
+.waveform-controls .cycle-input input {
+    width: 80px;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: white;
+    font-family: monospace;
+}
+
+/* Pin Grid */
+.pin-grid {
+    display: grid;
+    gap: 2px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 12px;
+    border-radius: 8px;
+    font-family: monospace;
+    font-size: 10px;
+}
+
+.pin-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: rgba(255, 255, 255, 0.6);
+    min-width: 24px;
+    min-height: 24px;
+}
+
+.pin-cell:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: scale(1.1);
+}
+
+.pin-cell.bim {
+    border: 1px solid rgba(96, 165, 250, 0.3);
+}
+
+.pin-cell.fast {
+    border: 1px solid rgba(192, 132, 252, 0.3);
+}
+
+.pin-cell.error {
+    background: rgba(239, 68, 68, 0.4);
+    color: white;
+    border-color: #ef4444;
+    animation: pulse-error 1.5s ease-in-out infinite;
+}
+
+.pin-cell.selected {
+    background: rgba(74, 222, 128, 0.4);
+    border-color: #4ade80;
+    color: white;
+    transform: scale(1.15);
+    box-shadow: 0 0 10px rgba(74, 222, 128, 0.5);
+}
+
+@keyframes pulse-error {
+
+    0%,
+    100% {
+        opacity: 1;
+        box-shadow: 0 0 5px rgba(239, 68, 68, 0.5);
+    }
+
+    50% {
+        opacity: 0.8;
+        box-shadow: 0 0 15px rgba(239, 68, 68, 0.8);
+    }
+}
+
+/* Pin Grid Legend */
+.pin-grid-legend {
+    display: flex;
+    gap: 16px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+}
+
+.legend-dot.bim {
+    background: rgba(96, 165, 250, 0.4);
+    border: 1px solid #60a5fa;
+}
+
+.legend-dot.fast {
+    background: rgba(192, 132, 252, 0.4);
+    border: 1px solid #c084fc;
+}
+
+.legend-dot.error {
+    background: rgba(239, 68, 68, 0.4);
+    border: 1px solid #ef4444;
+}
+
+/* Chart Headers */
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.chart-header h4 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.chart-header .current-value {
+    font-family: monospace;
+    font-size: 16px;
+    font-weight: 600;
+    color: #4ade80;
+}
+
+/* Chart Container */
+.chart-container {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.chart-container.error {
+    border-left: 3px solid #ef4444;
+}
+
+.chart-container.warning {
+    border-left: 3px solid #f59e0b;
+}
+
+/* Real-time indicator */
+.realtime-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.realtime-indicator::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    background: #4ade80;
+    border-radius: 50%;
+    animation: pulse-live 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-live {
+
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.5;
+        transform: scale(0.8);
+    }
+}
+
+/* Error Summary Card */
+.error-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.error-summary .stat {
+    text-align: center;
+}
+
+.error-summary .stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #ef4444;
+    font-family: monospace;
+}
+
+.error-summary .stat-label {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.6);
+    margin-top: 4px;
+}
+
+/* Tooltip */
+.chart-tooltip {
+    position: absolute;
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: white;
+    pointer-events: none;
+    z-index: 100;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.chart-tooltip .tooltip-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.chart-tooltip .tooltip-value {
+    font-family: monospace;
+    color: #4ade80;
+}

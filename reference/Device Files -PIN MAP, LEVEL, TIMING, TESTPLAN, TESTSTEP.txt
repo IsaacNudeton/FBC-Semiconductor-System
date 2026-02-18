@@ -1,0 +1,96 @@
+Pin Map format is very simple : Tester name in left column, DUT name right column terminated with ;
+Example -> B13_GPIO25   JTAG_TCK;  assigns tester channel GPIO25 to TCK.
+Analog/Power supplies uses same format 
+
+The levels file is used to define the io levels for each bank of the pins
+It can also be used to define pin type, but this is usually done in the timing file.
+
+The timing file is used to define the pin types and clocks
+You can have a different timing file for each test-step in the test-plan
+This is actually a script file, so you could put all kinds of special code in here, example below:
+
+EACH OF THESE COMMANDs HERE ARE FIRMWARE COMMANDS WHICH CAN BE USED TO PROGRAM AND DEBUG YOUR DEVICE. THESE COMMANDS ARE ALSO REVIEWED IN THE DEBUG SECTION.
+
+The test plan file *.tp is your test program you will be using to stress the device.
+The MCC translator can auto generate a test plan from a MCC program file *.hst file.
+First test step should be power up, last test step should be power down.
+The Test program is made up of several sections:
+Header: 
+Defines the TestProgram name
+Defines the directories used
+Defines amount of time we want to run the program
+Defines ADC sample period (how often we want to dump data)
+Defines mapping and levels files
+TEST_PROGRAM_NAME = NPS24May2016
+TEST_DURATION = 24.0
+DEVICE_DIR = /home/avagobi/NPS
+ADC_SAMPLE_PERIOD = 30
+PIN_MAP_FILE = /home/avagobi/NPS/NPS.map
+SETUP_FILE = /home/avagobi/NPS/NPS.lvl
+
+Test Steps:
+Name of Vector(s) in list to run, vectors are separated by ‘:’
+Timing file to run
+Temperature setting LL and UL this is universal over-temp setting should be the same for all test steps.
+Basic Delay to allow temperature to ramp or device to retain last state
+Repeat count – Number of times to repeat each test step before going to next test step. 
+Master_period is the period to run patterns in this test step.
+Delay_cycle is actually an options field and the name will be changed soon. Use 5 to start looping test steps here.
+Vector_time is the time in minutes to run each vector in list, separated by ‘:’. A 0: will run the vector once
+PU_LIST is the power up/power down settings for the power supplies, each supply setting is separated by a ‘:’
+PD_LIST is not needed as this can be done by PU_LIST
+
+TEST_STEPS START :
+
+TEST_STEP : POWER_UP{
+	VECTOR_FILE = N/A  can be multiple vectors ie: pattern1:pattern2::pattern3: use N/a for no patterns
+	TIMING_FILE = SetClocks.sh
+	SETPOINT_TEMP = 25
+	TEMP_UL = 75
+	TEMP_LL = 0
+	TEMP_RAMP_RATE = 0  Delay in seconds
+	REPEAT_COUNT = 1
+	MASTER_PERIOD = 50.0
+	DELAY_CYC = 0      Use a 5 here to start the time defined in the header and to identify start of loop
+	VECTOR_TIME = 0: if there are multiple patterns defined you need to have the time for each pattern defined 1:2:0:
+	PU_LIST = 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,V_x,0,v_xx,0,p_xx,0,V_8,1,1.000,0.000:0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,v_xx,0,v_xx,0,p_x,0,p_xx,0,1.000000,0.000000:0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,v_xx,0,v_xx,0,p_xx,0,p_xx,0,1.800,0.000:0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,V_0,0,v_xx,0,p_xx,0,p_xx,0,1.350,0.000:0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,V_0,1,v_xx,0,p_xx,0,p_xx,0,1.000,0.00:
+	PD_LIST = Nolist
+	}
+
+	PU_LIST = 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,V_x,0,v_xx,0,p_xx,0,V_8,1,1.000,0.000:0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,v_xx,0,v_xx,0,p_x,0,p_xx,0,1.000000,0.000000:0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,v_xx,0,v_xx,0,p_xx,0,p_xx,0,1.800,0.000:0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,V_0,0,v_xx,0,p_xx,0,p_xx,0,1.350,0.000:0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,V_0,1,v_xx,0,p_xx,0,p_xx,0,1.000,0.00:
+
+There are sixteen peripheral supplies and 4 core supplies per bim.
+0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,V_x,0,v_xx,0,p_xx,0,V_8,1,1.000,0.000: 
+16 channels a 1 in each column 
+ means settings are for these 
+supplies
+There are 4/6 core supplies
+The first field indicates type with control channel Second field indicates settings Active for this supply 
+Voltage
+Delay in ms
+
+The adc section is used to identify which analog signals we want to monitor and log, temperature is always logged. Shutdown and failure limits are defined for each step. 
+ADC_MONITOR_SETUPS START :
+
+    ADC : VDD{
+        UPPER_LIMIT = 1.30
+        LOWER_LIMIT = 0.7
+        UNITS = V
+        SHUTDOWN_LOWER_LIMIT = 0.6
+        SHUTDOWN_UPPER_LIMIT = 1.350
+        DATA_COLLECT = Avg
+    }
+
+    ADC : VDD_I{                    	All supplies have current monitoring capability
+        UPPER_LIMIT = 100.0
+        LOWER_LIMIT = 5.0
+        UNITS = A
+        SHUTDOWN_LOWER_LIMIT = -0.1
+        SHUTDOWN_UPPER_LIMIT = 120.0
+        DATA_COLLECT = Avg 	Can use Min/Avg/Max
+    }
+
+makePN14Nov2018.py which is the program that translates the intermediate *.avc or *.atp files into the testers binary format. This file also generates PinState and asci file showing final results for debug purposes. The PinState file can be used to automatically set PinTypes per pattern.
+
+
+

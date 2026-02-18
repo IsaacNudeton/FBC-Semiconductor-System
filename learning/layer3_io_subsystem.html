@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FBC Learning - Phase 1: I/O Subsystem</title>
+    <style>
+        :root {
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --accent: #e94560;
+            --accent2: #0f3460;
+            --text: #eee;
+            --text-dim: #888;
+            --signal-high: #4ade80;
+            --signal-low: #64748b;
+            --signal-z: #fbbf24;
+            --signal-x: #ef4444;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            padding: 20px 0 40px;
+            border-bottom: 2px solid var(--accent);
+            margin-bottom: 30px;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        header .subtitle {
+            color: var(--text-dim);
+            font-size: 1.1rem;
+        }
+
+        .progress-bar {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin: 20px 0;
+        }
+
+        .progress-step {
+            width: 40px;
+            height: 8px;
+            background: var(--accent2);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .progress-step.active {
+            background: var(--accent);
+        }
+
+        .progress-step.completed {
+            background: var(--signal-high);
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+        }
+
+        .lesson-panel {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 30px;
+        }
+
+        .lesson-title {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: var(--accent);
+        }
+
+        .lesson-content {
+            line-height: 1.8;
+            font-size: 1.05rem;
+        }
+
+        .lesson-content p {
+            margin-bottom: 15px;
+        }
+
+        .lesson-content code {
+            background: #0d1b2a;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Consolas', monospace;
+            color: var(--signal-high);
+        }
+
+        .lesson-content pre {
+            background: #0d1b2a;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-family: 'Consolas', monospace;
+            font-size: 0.9rem;
+            line-height: 1.6;
+        }
+
+        .waveform-container {
+            background: #0d1b2a;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .waveform-title {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .waveform-canvas {
+            width: 100%;
+            height: 300px;
+        }
+
+        .signal-row {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+        }
+
+        .signal-name {
+            width: 120px;
+            font-family: 'Consolas', monospace;
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        .signal-wave {
+            flex: 1;
+            height: 30px;
+            display: flex;
+            align-items: center;
+        }
+
+        .wave-segment {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            transition: all 0.3s;
+        }
+
+        .wave-high {
+            background: var(--signal-high);
+            border-radius: 2px;
+        }
+
+        .wave-low {
+            background: var(--signal-low);
+            border-radius: 2px;
+        }
+
+        .wave-z {
+            background: var(--signal-z);
+            border-radius: 2px;
+        }
+
+        .wave-transition {
+            width: 4px;
+            background: linear-gradient(to bottom, var(--signal-high), var(--signal-low));
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .info-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .info-card h3 {
+            font-size: 1rem;
+            margin-bottom: 15px;
+            color: var(--accent);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .pin-type-list {
+            list-style: none;
+        }
+
+        .pin-type-list li {
+            padding: 10px;
+            margin: 5px 0;
+            background: #0d1b2a;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border-left: 3px solid transparent;
+        }
+
+        .pin-type-list li:hover {
+            border-left-color: var(--accent);
+            transform: translateX(5px);
+        }
+
+        .pin-type-list li.active {
+            border-left-color: var(--signal-high);
+            background: #1a2a3a;
+        }
+
+        .pin-type-list .code {
+            font-family: 'Consolas', monospace;
+            color: var(--signal-high);
+            font-size: 0.8rem;
+        }
+
+        .pin-type-list .name {
+            font-weight: bold;
+            margin: 5px 0;
+        }
+
+        .pin-type-list .desc {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+        }
+
+        .nav-btn {
+            flex: 1;
+            padding: 15px 25px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .nav-btn.prev {
+            background: var(--accent2);
+            color: var(--text);
+        }
+
+        .nav-btn.next {
+            background: var(--accent);
+            color: white;
+        }
+
+        .nav-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(233, 69, 96, 0.3);
+        }
+
+        .nav-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .highlight-box {
+            background: linear-gradient(135deg, rgba(233, 69, 96, 0.1), rgba(15, 52, 96, 0.2));
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+        }
+
+        .highlight-box .title {
+            font-weight: bold;
+            color: var(--accent);
+            margin-bottom: 8px;
+        }
+
+        .timing-diagram {
+            font-family: 'Consolas', monospace;
+            font-size: 0.85rem;
+            line-height: 1.4;
+            white-space: pre;
+            overflow-x: auto;
+        }
+
+        .concept-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .concept-item {
+            background: #0d1b2a;
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .concept-item .value {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--signal-high);
+        }
+
+        .concept-item .label {
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-top: 5px;
+        }
+
+        /* Animation for waveforms */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .wave-active {
+            animation: pulse 1s infinite;
+        }
+
+        .lesson-hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>FBC Semiconductor System</h1>
+            <div class="subtitle">Phase 1.1: Understanding the I/O Subsystem ✓ COMPLETE</div>
+            <div class="progress-bar">
+                <div class="progress-step active" data-step="0"></div>
+                <div class="progress-step" data-step="1"></div>
+                <div class="progress-step" data-step="2"></div>
+                <div class="progress-step" data-step="3"></div>
+                <div class="progress-step" data-step="4"></div>
+                <div class="progress-step" data-step="5"></div>
+                <div class="progress-step" data-step="6"></div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div class="lesson-panel">
+                <!-- Lesson 0: Introduction -->
+                <div class="lesson" id="lesson-0">
+                    <h2 class="lesson-title">What is an I/O Subsystem?</h2>
+                    <div class="lesson-content">
+                        <p>In a burn-in test system, the <strong>I/O subsystem</strong> is the bridge between the FPGA and the chip being tested (DUT - Device Under Test).</p>
+
+                        <div class="concept-grid">
+                            <div class="concept-item">
+                                <div class="value">160</div>
+                                <div class="label">GPIO Pins</div>
+                            </div>
+                            <div class="concept-item">
+                                <div class="value">9</div>
+                                <div class="label">Pin Types</div>
+                            </div>
+                            <div class="concept-item">
+                                <div class="value">128</div>
+                                <div class="label">Vector Width</div>
+                            </div>
+                            <div class="concept-item">
+                                <div class="value">200</div>
+                                <div class="label">MHz Clock</div>
+                            </div>
+                        </div>
+
+                        <p>Each pin can be configured to behave differently:</p>
+                        <ul style="margin-left: 20px; margin-bottom: 15px;">
+                            <li><strong>Drive</strong> - Push a value onto the pin (0 or 1)</li>
+                            <li><strong>Compare</strong> - Read the pin and check against expected</li>
+                            <li><strong>High-Z</strong> - Disconnect (tri-state)</li>
+                        </ul>
+
+                        <div class="highlight-box">
+                            <div class="title">Key Insight</div>
+                            The magic is that EACH of the 160 pins can have a DIFFERENT behavior at the SAME time. One pin drives, another compares, another pulses.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lesson 1: Pin Types Overview -->
+                <div class="lesson lesson-hidden" id="lesson-1">
+                    <h2 class="lesson-title">The 9 Pin Types</h2>
+                    <div class="lesson-content">
+                        <p>The 2016 system defines 9 pin types using a 4-bit code. Here's the Verilog from <code>vector.vh</code>:</p>
+
+                        <pre>
+`define BIDI_PIN        4'b0000  // Bidirectional
+`define INPUT_PIN       4'b0001  // Input (compare only)
+`define OUTPUT_PIN      4'b0010  // Output (drive only)
+`define OPEN_C_PIN      4'b0011  // Open collector
+`define PULSE_PIN       4'b0100  // Pulse waveform
+`define NPULSE_PIN      4'b0101  // Inverted pulse
+`define ERROR_TRIG      4'b0110  // Error trigger
+`define VEC_CLK_PIN     4'b0111  // Vector clock out
+`define VEC_CLK_EN_PIN  4'b1000  // Clock enable out</pre>
+
+                        <p>Let's understand each one...</p>
+
+                        <div class="highlight-box">
+                            <div class="title">Why 4 bits?</div>
+                            4 bits = 16 possible values. Only 9 are used, leaving room for future pin types without changing the bus width.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lesson 2: BIDI Pin -->
+                <div class="lesson lesson-hidden" id="lesson-2">
+                    <h2 class="lesson-title">BIDI_PIN (Bidirectional)</h2>
+                    <div class="lesson-content">
+                        <p>The most common pin type. Can both <strong>drive</strong> and <strong>compare</strong> based on the output enable (OEN).</p>
+
+                        <div class="waveform-container">
+                            <div class="waveform-title">BIDI Pin Timing</div>
+                            <div class="signal-row">
+                                <div class="signal-name">clk</div>
+                                <div class="signal-wave" id="wave-clk"></div>
+                            </div>
+                            <div class="signal-row">
+                                <div class="signal-name">oen</div>
+                                <div class="signal-wave" id="wave-oen"></div>
+                            </div>
+                            <div class="signal-row">
+                                <div class="signal-name">dout</div>
+                                <div class="signal-wave" id="wave-dout"></div>
+                            </div>
+                            <div class="signal-row">
+                                <div class="signal-name">pin (actual)</div>
+                                <div class="signal-wave" id="wave-pin"></div>
+                            </div>
+                            <div class="signal-row">
+                                <div class="signal-name">din (read)</div>
+                                <div class="signal-wave" id="wave-din"></div>
+                            </div>
+                            <div class="signal-row">
+                                <div class="signal-name">error</div>
+                                <div class="signal-wave" id="wave-error"></div>
+                            </div>
+                        </div>
+
+                        <p>Logic:</p>
+                        <pre>
+// When OEN=1: Drive the pin
+pin <= dout;
+
+// When OEN=0: Compare (high-Z output)
+pin <= 1'bZ;
+error <= (din != expected);</pre>
+
+                        <div class="highlight-box">
+                            <div class="title">Error Detection</div>
+                            Error occurs when OEN=0 (comparing) AND the pin value doesn't match what we expected. This catches manufacturing defects.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lesson 3: PULSE Pin -->
+                <div class="lesson lesson-hidden" id="lesson-3">
+                    <h2 class="lesson-title">PULSE_PIN (Timed Pulse)</h2>
+                    <div class="lesson-content">
+                        <p>Generates a pulse with precise timing. Rising edge at T/4, falling edge at 3T/4 of the vector clock period.</p>
+
+                        <div class="waveform-container">
+                            <div class="waveform-title">Pulse Pin Timing (T = one vector clock period)</div>
+                            <div class="timing-diagram">
+vec_clk:    ____/````\____/````\____/````\____
+                |    |    |    |    |    |
+                0   T/4  T/2  3T/4  T   ...
+
+pulse_out:  ____/`````````\__________/`````````\____
+                ^         ^
+                |         |
+             Rise at    Fall at
+               T/4       3T/4
+
+npulse_out: ````\_________/``````````\_________/````
+            (inverted)
+                            </div>
+                        </div>
+
+                        <p>This requires <strong>phase-shifted clocks</strong>:</p>
+                        <ul style="margin-left: 20px;">
+                            <li><code>vec_clk</code> - 0° phase (base clock)</li>
+                            <li><code>vec_clk_90</code> - 90° phase (T/4 delayed)</li>
+                            <li><code>vec_clk_180</code> - 180° phase (T/2 delayed)</li>
+                        </ul>
+
+                        <div class="highlight-box">
+                            <div class="title">Why Pulses?</div>
+                            Some chip pins need clock-like signals or edge triggers. PULSE lets you generate them without wasting vector memory on every edge.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lesson 4: Open Collector -->
+                <div class="lesson lesson-hidden" id="lesson-4">
+                    <h2 class="lesson-title">OPEN_C_PIN (Open Collector)</h2>
+                    <div class="lesson-content">
+                        <p>Open collector/drain outputs can only <strong>pull LOW</strong> or <strong>float</strong>. They rely on external pull-up resistors to go high.</p>
+
+                        <div class="waveform-container">
+                            <div class="waveform-title">Open Collector Behavior</div>
+                            <div class="timing-diagram">
+dout=0:  Pin floats HIGH (external pull-up)
+         FPGA: Z ----+---- External: 1
+                     |
+                    ===  Pull-up resistor
+                     |
+                    VCC
+
+dout=1:  Pin driven LOW
+         FPGA: 0 ----+---- External: 0
+                     |
+                    ===  Pull-up (overpowered)
+                     |
+                    VCC
+                            </div>
+                        </div>
+
+                        <pre>
+// Open collector logic
+pin_oen <= dout;        // OEN controlled by data
+pin_dout <= 1'b0;       // Always drive low when enabled
+
+// Error check: if we're floating (dout=0)
+// and pin reads low, something is pulling it down
+error <= (!dout) && (din == 1'b0);</pre>
+
+                        <div class="highlight-box">
+                            <div class="title">Use Case</div>
+                            I2C buses use open-drain. Multiple devices can share a line - anyone can pull low, and it floats high when everyone releases.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lesson 5: The io_table.v File -->
+                <div class="lesson lesson-hidden" id="lesson-5">
+                    <h2 class="lesson-title">Inside io_table.v</h2>
+                    <div class="lesson-content">
+                        <p>The <code>io_table.v</code> file in the reference design decodes the 4-bit pin type into control signals.</p>
+
+                        <pre>
+// Simplified from reference/kzhang_v2_2016/io_table.v
+
+module io_cell (
+    input  [3:0] pin_type,    // Which type?
+    input        dout,        // Data to drive
+    input        din,         // Data read from pin
+    input        expected,    // Expected value
+    input        vec_clk,     // Vector clock
+    input        vec_clk_90,  // 90° phase
+
+    output reg   pin_oen,     // Output enable
+    output reg   pin_dout,    // Actual output
+    output reg   error        // Mismatch detected
+);
+
+always @(*) begin
+    case (pin_type)
+        4'b0000: begin  // BIDI
+            pin_oen  = oen_from_vector;
+            pin_dout = dout;
+            error    = !pin_oen && (din != expected);
+        end
+
+        4'b0010: begin  // OUTPUT
+            pin_oen  = 1'b1;  // Always driving
+            pin_dout = dout;
+            error    = 1'b0;  // Never compare
+        end
+
+        4'b0100: begin  // PULSE
+            pin_oen  = 1'b1;
+            pin_dout = vec_clk_90;  // 90° phase = pulse
+            error    = 1'b0;
+        end
+
+        // ... other types
+    endcase
+end
+
+endmodule</pre>
+
+                        <div class="highlight-box" style="border-color: #10b981; background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(15, 52, 96, 0.2));">
+                            <div class="title" style="color: #10b981;">✓ BUILT AND TESTED</div>
+                            <code>rtl/io_cell.v</code> + <code>io_bank.v</code> are complete with 31 passing tests! All pin types working: BIDI, INPUT, OUTPUT, PULSE, NPULSE, VEC_CLK.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lesson 6: Summary -->
+                <div class="lesson lesson-hidden" id="lesson-6">
+                    <h2 class="lesson-title">Summary: I/O Subsystem</h2>
+                    <div class="lesson-content">
+                        <p>You now understand:</p>
+
+                        <div class="concept-grid">
+                            <div class="concept-item">
+                                <div class="value">160</div>
+                                <div class="label">Pins, each configurable</div>
+                            </div>
+                            <div class="concept-item">
+                                <div class="value">9</div>
+                                <div class="label">Pin types (4-bit code)</div>
+                            </div>
+                        </div>
+
+                        <p><strong>Pin Types Covered:</strong></p>
+                        <ul style="margin-left: 20px; margin-bottom: 15px;">
+                            <li><code>BIDI</code> - Drive or compare based on OEN</li>
+                            <li><code>INPUT</code> - Compare only</li>
+                            <li><code>OUTPUT</code> - Drive only</li>
+                            <li><code>OPEN_C</code> - Pull low or float</li>
+                            <li><code>PULSE</code> - Generate timed pulses</li>
+                            <li><code>NPULSE</code> - Inverted pulse</li>
+                        </ul>
+
+                        <p><strong>Key Files:</strong></p>
+                        <ul style="margin-left: 20px; margin-bottom: 15px;">
+                            <li><code>reference/kzhang_v2_2016/vector.vh</code> - Pin type definitions</li>
+                            <li><code>reference/kzhang_v2_2016/io_table.v</code> - Pin type decoder</li>
+                            <li><code>reference/kzhang_v2_2016/axi_io_table.v</code> - Configuration registers</li>
+                        </ul>
+
+                        <div class="highlight-box" style="border-color: #10b981; background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(15, 52, 96, 0.2));">
+                            <div class="title" style="color: #10b981;">✓ PHASE COMPLETE</div>
+                            <code>io_cell.v</code> and <code>io_bank.v</code> are built and verified with our behavioral simulator. 31 tests passing including PULSE timing edge cases!
+                        </div>
+                    </div>
+                </div>
+
+                <div class="nav-buttons">
+                    <button class="nav-btn prev" onclick="prevLesson()" id="prev-btn" disabled>Previous</button>
+                    <button class="nav-btn next" onclick="nextLesson()" id="next-btn">Next</button>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <div class="info-card">
+                    <h3>Pin Types</h3>
+                    <ul class="pin-type-list">
+                        <li class="active" onclick="selectPinType(this, 0)">
+                            <div class="code">4'b0000</div>
+                            <div class="name">BIDI_PIN</div>
+                            <div class="desc">Bidirectional I/O</div>
+                        </li>
+                        <li onclick="selectPinType(this, 1)">
+                            <div class="code">4'b0001</div>
+                            <div class="name">INPUT_PIN</div>
+                            <div class="desc">Input only</div>
+                        </li>
+                        <li onclick="selectPinType(this, 2)">
+                            <div class="code">4'b0010</div>
+                            <div class="name">OUTPUT_PIN</div>
+                            <div class="desc">Output only</div>
+                        </li>
+                        <li onclick="selectPinType(this, 3)">
+                            <div class="code">4'b0011</div>
+                            <div class="name">OPEN_C_PIN</div>
+                            <div class="desc">Open collector</div>
+                        </li>
+                        <li onclick="selectPinType(this, 4)">
+                            <div class="code">4'b0100</div>
+                            <div class="name">PULSE_PIN</div>
+                            <div class="desc">Timed pulse</div>
+                        </li>
+                        <li onclick="selectPinType(this, 5)">
+                            <div class="code">4'b0101</div>
+                            <div class="name">NPULSE_PIN</div>
+                            <div class="desc">Inverted pulse</div>
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="info-card">
+                    <h3>Current Lesson</h3>
+                    <div id="lesson-indicator" style="font-size: 2rem; text-align: center; padding: 20px;">
+                        1 / 7
+                    </div>
+                </div>
+
+                <div class="info-card">
+                    <h3>Reference Files</h3>
+                    <ul style="list-style: none; font-size: 0.9rem;">
+                        <li style="padding: 5px 0;"><code>vector.vh</code></li>
+                        <li style="padding: 5px 0;"><code>io_table.v</code></li>
+                        <li style="padding: 5px 0;"><code>axi_io_table.v</code></li>
+                        <li style="padding: 5px 0;"><code>top.v</code></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentLesson = 0;
+        const totalLessons = 7;
+
+        function showLesson(index) {
+            // Hide all lessons
+            document.querySelectorAll('.lesson').forEach(l => l.classList.add('lesson-hidden'));
+            // Show current
+            document.getElementById(`lesson-${index}`).classList.remove('lesson-hidden');
+
+            // Update progress bar
+            document.querySelectorAll('.progress-step').forEach((step, i) => {
+                step.classList.remove('active', 'completed');
+                if (i < index) step.classList.add('completed');
+                if (i === index) step.classList.add('active');
+            });
+
+            // Update buttons
+            document.getElementById('prev-btn').disabled = (index === 0);
+            document.getElementById('next-btn').textContent = (index === totalLessons - 1) ? 'Finish' : 'Next';
+
+            // Update indicator
+            document.getElementById('lesson-indicator').textContent = `${index + 1} / ${totalLessons}`;
+
+            // Draw waveforms if on lesson 2
+            if (index === 2) {
+                drawBidiWaveforms();
+            }
+        }
+
+        function nextLesson() {
+            if (currentLesson < totalLessons - 1) {
+                currentLesson++;
+                showLesson(currentLesson);
+            }
+        }
+
+        function prevLesson() {
+            if (currentLesson > 0) {
+                currentLesson--;
+                showLesson(currentLesson);
+            }
+        }
+
+        function selectPinType(element, index) {
+            document.querySelectorAll('.pin-type-list li').forEach(li => li.classList.remove('active'));
+            element.classList.add('active');
+        }
+
+        function drawBidiWaveforms() {
+            // Simple waveform drawing
+            const waves = {
+                'wave-clk': [1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],
+                'wave-oen': [1,1,1,1,1,1,0,0,0,0,0,0,1,1,1,1],
+                'wave-dout': [1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0],
+                'wave-pin': [1,1,0,0,1,1,'Z','Z','Z','Z','Z','Z',1,1,0,0],
+                'wave-din': [1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0],
+                'wave-error': [0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0]
+            };
+
+            for (const [id, data] of Object.entries(waves)) {
+                const container = document.getElementById(id);
+                if (!container) continue;
+                container.innerHTML = '';
+
+                data.forEach((val, i) => {
+                    const seg = document.createElement('div');
+                    seg.className = 'wave-segment';
+                    seg.style.flex = '1';
+                    seg.style.margin = '0 1px';
+
+                    if (val === 1) {
+                        seg.classList.add('wave-high');
+                        seg.style.height = '80%';
+                        seg.style.alignSelf = 'flex-start';
+                    } else if (val === 0) {
+                        seg.classList.add('wave-low');
+                        seg.style.height = '80%';
+                        seg.style.alignSelf = 'flex-end';
+                    } else if (val === 'Z') {
+                        seg.classList.add('wave-z');
+                        seg.style.height = '30%';
+                        seg.style.alignSelf = 'center';
+                        seg.textContent = 'Z';
+                        seg.style.color = '#000';
+                        seg.style.fontSize = '0.6rem';
+                    }
+
+                    // Highlight error
+                    if (id === 'wave-error' && val === 1) {
+                        seg.style.background = '#ef4444';
+                    }
+
+                    container.appendChild(seg);
+                });
+            }
+        }
+
+        // Progress step click
+        document.querySelectorAll('.progress-step').forEach(step => {
+            step.addEventListener('click', () => {
+                currentLesson = parseInt(step.dataset.step);
+                showLesson(currentLesson);
+            });
+        });
+
+        // Initialize
+        showLesson(0);
+    </script>
+</body>
+</html>

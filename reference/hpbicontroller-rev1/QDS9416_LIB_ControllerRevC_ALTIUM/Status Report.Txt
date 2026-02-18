@@ -1,0 +1,11 @@
+Output: Generates pick and place files
+Type  : Pick Place
+From  : Variant [[No Variations]] of Project [Free Documents]
+   Generated File[Pick Place for HPBIController-1.txt]
+   Generated File[Pick Place for HPBIController-1.csv]
+
+
+Files Generated   : 2
+Documents Printed : 0
+
+Finished Output Generation At 7:36:29 AM On 10/10/2019

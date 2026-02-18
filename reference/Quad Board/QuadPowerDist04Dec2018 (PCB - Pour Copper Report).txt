@@ -1,0 +1,13 @@
+Pour Copper Report
+------------------
+
+Report Written:     Monday, May 04, 2020
+Design Path:        C:\Users\lance\Dropbox\Volt\Quad Board\QuadPowerDist04Dec2018.pcb
+Design Title:       
+Created:            11/25/2013 5:20:32 PM
+Last Saved:         5/4/2020 10:38:02 AM
+Editing Time:       35351 min
+Units:              mil (precision 1)
+
+
+End Of Report.

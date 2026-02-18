@@ -1,0 +1,168 @@
+.status-panel {
+  width: 320px;
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--bg-tertiary);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.status-panel h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.status-panel h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 8px 0;
+}
+
+.status-message {
+  color: var(--text-secondary);
+  font-style: italic;
+  padding: 20px;
+  text-align: center;
+}
+
+.board-info,
+.status-section {
+  background: var(--bg-primary);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.info-row .label {
+  color: var(--text-secondary);
+}
+
+.info-row .value {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.info-row .value.mono {
+  font-family: 'Monaco', 'Consolas', monospace;
+  font-size: 12px;
+}
+
+.info-row .value.error {
+  color: var(--error);
+}
+
+.state-idle { color: var(--idle); }
+.state-running { color: var(--success); }
+.state-done { color: #4488ff; }
+.state-error { color: var(--error); }
+
+.controls {
+  display: flex;
+  gap: 8px;
+}
+
+.controls button {
+  flex: 1;
+  padding: 10px;
+  font-weight: 600;
+}
+
+.btn-start {
+  background: var(--success);
+  color: #000;
+}
+
+.btn-start:hover {
+  background: #00ff7f;
+}
+
+.btn-stop {
+  background: var(--error);
+  color: #fff;
+}
+
+.btn-stop:hover {
+  background: #ff6666;
+}
+
+.btn-reset {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.btn-reset:hover {
+  background: #1a5080;
+}
+
+.btn-close {
+  background: transparent;
+  border: 1px solid var(--bg-tertiary);
+  color: var(--text-secondary);
+  width: 100%;
+}
+
+.btn-close:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.board-list {
+  flex: 1;
+  min-height: 0;
+}
+
+.board-list-items {
+  max-height: 300px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.board-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.board-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.board-item.selected {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent);
+}
+
+.board-mac {
+  font-family: 'Monaco', 'Consolas', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.board-state {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.loading {
+  color: var(--text-secondary);
+  font-style: italic;
+  padding: 8px;
+}

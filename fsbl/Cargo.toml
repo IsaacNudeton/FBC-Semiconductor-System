@@ -1,0 +1,23 @@
+[package]
+name = "fbc-fsbl"
+version = "0.1.0"
+edition = "2021"
+authors = ["Isaac Nudeton <isaac@iselabs.com>"]
+description = "First Stage Boot Loader for FBC System (Zynq 7020) - Pure Rust"
+license = "Proprietary"
+
+[[bin]]
+name = "fbc-fsbl"
+path = "src/main.rs"
+
+[dependencies]
+# No dependencies - fully standalone
+
+[profile.release]
+opt-level = "s"      # Optimize for size (must fit in 192KB OCM)
+lto = true
+codegen-units = 1
+panic = "abort"      # No unwinding in bootloader
+
+[profile.dev]
+panic = "abort"

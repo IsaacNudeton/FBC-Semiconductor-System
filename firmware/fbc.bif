@@ -1,0 +1,9 @@
+// FBC Semiconductor System Boot Image Format
+// For use with zynq-mkbootimage
+
+the_ROM_image:
+{
+    [bootloader]/mnt/FSBL.elf
+    /mnt/top.bit
+    /tmp/fbc-firmware
+}

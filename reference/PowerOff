@@ -1,0 +1,41 @@
+/mnt/bin/linux_pmbus_OFF.elf 9        # VDD_DDR1_C4_C5_C6
+/mnt/bin/linux_pmbus_OFF.elf 10       # VDD_DDR0_C4_C5_C6
+/mnt/bin/linux_pmbus_OFF.elf 11       # VDD_DDR1_C1_C2_C3
+/mnt/bin/linux_pmbus_OFF.elf 12       # VDD_DDR0_C1_C2_C3
+/mnt/bin/linux_pmbus_OFF.elf 13       # VDD_DIG_DDR01_C5_C6
+/mnt/bin/linux_pmbus_OFF.elf 15       # VDD_DIG_DDR01_C3_C4
+/mnt/bin/linux_pmbus_OFF.elf 16       # VDD_DIG_DDR01_C1_C2
+
+/mnt/bin/linux_IO_PS.elf 0 0 0 0
+/mnt/bin/linux_pmbus_OFF.elf 7        # OSC
+
+/mnt/bin/linux_pmbus_OFF.elf 14       # VDD_IO
+
+/mnt/bin/linux_pmbus_OFF.elf 1        # VDD_HA_C1
+/mnt/bin/linux_pmbus_OFF.elf 2        # VDD_HA_C2
+/mnt/bin/linux_pmbus_OFF.elf 3        # VDD_HA_C3
+/mnt/bin/linux_pmbus_OFF.elf 4        # VDD_HA_C4
+/mnt/bin/linux_pmbus_OFF.elf 5        # VDD_HA_C5
+/mnt/bin/linux_pmbus_OFF.elf 6        # VDD_HA_C6
+
+/mnt/bin/linux_pmbus_OFF.elf 17       # VDD_DIG_C1
+/mnt/bin/linux_pmbus_OFF.elf 18       # VDD_DIG_C2
+/mnt/bin/linux_pmbus_OFF.elf 19       # VDD_DIG_C3
+/mnt/bin/linux_pmbus_OFF.elf 20       # VDD_DIG_C4
+/mnt/bin/linux_pmbus_OFF.elf 21       # VDD_DIG_C5
+/mnt/bin/linux_pmbus_OFF.elf 22       # VDD_DIG_C6
+
+/mnt/bin/linux_VICOR.elf 0.0 39 3     # VDD_GIG_QIP01_C1_C2
+/mnt/bin/linux_VICOR.elf 0.0 38 4     # VDD_GIG_QIP01_C3_C4
+/mnt/bin/linux_VICOR.elf 0.0 37 2     # VDD_GIG_QIP01_C5_C6
+
+/mnt/bin/linux_VICOR.elf 0.0 0 9      # VDDC_C1_C2
+/mnt/bin/linux_VICOR.elf 0.0 47 7     # VDDC_C3_C4
+/mnt/bin/linux_VICOR.elf 0.0 8 8      # VDDC_C5_C6
+
+
+
+
+
+
+																	

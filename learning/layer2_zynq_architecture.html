@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Layer 2: Zynq Architecture</title>
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --bg-card: #12121a;
+            --accent: #6366f1;
+            --accent2: #8b5cf6;
+            --green: #10b981;
+            --yellow: #f59e0b;
+            --red: #ef4444;
+            --text: #e2e8f0;
+            --text-dim: #64748b;
+            --border: #1e293b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+            padding: 40px;
+        }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .breadcrumb { margin-bottom: 30px; }
+        .breadcrumb a { color: var(--accent); text-decoration: none; }
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .subtitle { color: var(--text-dim); font-size: 1.1rem; margin-bottom: 40px; }
+        .section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+        .section h2 { color: var(--accent); margin-bottom: 20px; font-size: 1.4rem; }
+        .section h3 { color: var(--text); margin: 25px 0 15px; font-size: 1.1rem; }
+        p { margin-bottom: 15px; }
+        pre {
+            background: #0a0a0f;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.9rem;
+            margin: 15px 0;
+        }
+        code {
+            background: #1a1a2a;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: 'Fira Code', monospace;
+            color: var(--green);
+        }
+        .diagram {
+            background: #0a0a0f;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.8rem;
+            white-space: pre;
+            overflow-x: auto;
+            line-height: 1.3;
+        }
+        .highlight {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1));
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        .highlight-title { color: var(--accent); font-weight: 600; margin-bottom: 10px; }
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .compare-box {
+            background: #0a0a0f;
+            border-radius: 8px;
+            padding: 20px;
+            border-left: 3px solid var(--green);
+        }
+        .compare-box.new { border-left-color: var(--accent); }
+        .compare-box h4 { margin-bottom: 10px; color: var(--text-dim); font-size: 0.9rem; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: var(--bg); color: var(--text-dim); text-transform: uppercase; font-size: 0.8rem; }
+        .nav-buttons { display: flex; justify-content: space-between; margin-top: 40px; }
+        .nav-btn {
+            padding: 15px 30px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 500;
+            transition: all 0.3s;
+        }
+        .nav-btn.prev { background: var(--bg-card); border: 1px solid var(--border); color: var(--text); }
+        .nav-btn.next { background: var(--accent); color: white; }
+        .nav-btn:hover { transform: translateY(-2px); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb">
+            <a href="index.html">← Learning Hub</a>
+        </div>
+
+        <h1>Layer 2: Zynq Architecture</h1>
+        <p class="subtitle">Two chips in one: ARM processors + FPGA fabric. How they talk to each other.</p>
+
+        <!-- Overview -->
+        <div class="section">
+            <h2>What is Zynq?</h2>
+            <p>Zynq is Xilinx's <strong>SoC (System on Chip)</strong> that combines:</p>
+            <ul style="margin-left: 20px; margin-bottom: 15px;">
+                <li><strong>PS (Processing System)</strong> - Dual ARM Cortex-A9 cores + peripherals</li>
+                <li><strong>PL (Programmable Logic)</strong> - The FPGA fabric we learned in Layer 1</li>
+            </ul>
+
+            <div class="diagram">
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              ZYNQ 7020 SoC                                  │
+│  ┌─────────────────────────────────┐  ┌─────────────────────────────────┐  │
+│  │      Processing System (PS)     │  │    Programmable Logic (PL)      │  │
+│  │  ┌───────────┬───────────┐     │  │                                  │  │
+│  │  │  ARM      │   ARM     │     │  │    ┌─────┬─────┬─────┬─────┐   │  │
+│  │  │ Cortex-A9 │ Cortex-A9 │     │  │    │ CLB │ CLB │ CLB │ CLB │   │  │
+│  │  │  Core 0   │  Core 1   │     │  │    ├─────┼─────┼─────┼─────┤   │  │
+│  │  └─────┬─────┴─────┬─────┘     │  │    │ CLB │BRAM │ CLB │ CLB │   │  │
+│  │        │   Snoop Control Unit  │  │    ├─────┼─────┼─────┼─────┤   │  │
+│  │  ┌─────┴───────────┴─────┐     │  │    │ CLB │ CLB │ DSP │ CLB │   │  │
+│  │  │      L2 Cache (512KB) │     │  │    └─────┴─────┴─────┴─────┘   │  │
+│  │  └───────────┬───────────┘     │  │                                  │  │
+│  │              │                  │  │    53,200 LUTs                  │  │
+│  │  ┌───────────┴───────────┐     │  │    106,400 FFs                  │  │
+│  │  │   DDR Controller      │     │  │    140 BRAMs                    │  │
+│  │  │   (up to 1GB DDR3)    │     │  │    220 DSPs                     │  │
+│  │  └───────────────────────┘     │  │                                  │  │
+│  │                                 │  │                                  │  │
+│  │  Peripherals:                   │◄─┼──► AXI Interconnect             │  │
+│  │  - 2x GigE, 2x USB, 2x UART    │  │                                  │  │
+│  │  - SD/SDIO, SPI, I2C, CAN      │  │                                  │  │
+│  │  - GPIO (MIO pins)              │  │                                  │  │
+│  └─────────────────────────────────┘  └─────────────────────────────────┘  │
+│                                                                             │
+│         667 MHz                              Up to 250 MHz                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+            </div>
+
+            <div class="highlight">
+                <div class="highlight-title">Key Insight</div>
+                The PS is a <strong>real computer</strong> - it boots, runs Linux (or bare-metal), has USB, Ethernet. The PL is custom hardware YOU design. They communicate via AXI buses.
+            </div>
+        </div>
+
+        <!-- PS Details -->
+        <div class="section">
+            <h2>Processing System (PS)</h2>
+            <p>The PS boots first. It can then configure the PL with a bitstream.</p>
+
+            <h3>Key Components</h3>
+            <table>
+                <thead>
+                    <tr><th>Component</th><th>Spec</th><th>Purpose</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>ARM Cortex-A9</td><td>Dual core @ 667MHz</td><td>Run firmware/OS</td></tr>
+                    <tr><td>L1 Cache</td><td>32KB I + 32KB D per core</td><td>Fast local memory</td></tr>
+                    <tr><td>L2 Cache</td><td>512KB shared</td><td>Shared memory</td></tr>
+                    <tr><td>DDR Controller</td><td>Up to 1GB DDR3</td><td>Main memory</td></tr>
+                    <tr><td>GigE</td><td>2x 10/100/1000</td><td>Network (our control link)</td></tr>
+                    <tr><td>USB</td><td>2x USB 2.0 OTG</td><td>Debug, peripherals</td></tr>
+                    <tr><td>UART</td><td>2x</td><td>Serial console</td></tr>
+                    <tr><td>MIO</td><td>54 pins</td><td>PS-side GPIO</td></tr>
+                </tbody>
+            </table>
+
+            <h3>Clock Generation</h3>
+            <p>The PS generates clocks for both itself AND the PL:</p>
+            <pre>
+PS_CLK (33.33 MHz input)
+    │
+    ├──► ARM PLL ──► 667 MHz (CPU clock)
+    │
+    ├──► DDR PLL ──► 533 MHz (memory clock)
+    │
+    └──► IO PLL ──► FCLK_CLK0 ──► 100 MHz ──► To PL (AXI bus clock)
+                 └► FCLK_CLK1 ──► 200 MHz ──► To PL (vector timing)
+                 └► FCLK_CLK2 ──► (unused)
+                 └► FCLK_CLK3 ──► (unused)</pre>
+
+            <div class="highlight">
+                <div class="highlight-title">Important for Our System</div>
+                <code>FCLK_CLK0</code> (100 MHz) is the AXI bus clock - all register accesses.<br>
+                <code>FCLK_CLK1</code> (200 MHz) is the base for vector timing clocks.
+            </div>
+        </div>
+
+        <!-- PS-PL Interface -->
+        <div class="section">
+            <h2>PS ↔ PL Communication</h2>
+            <p>The PS and PL are connected by <strong>AXI (Advanced eXtensible Interface)</strong> buses.</p>
+
+            <div class="diagram">
+┌─────────────────────────────────────────────────────────────────────┐
+│                        AXI Interconnect                             │
+│                                                                      │
+│   PS Side (Masters)                    PL Side (Slaves)             │
+│   ─────────────────                    ────────────────             │
+│                                                                      │
+│   ┌─────────────┐    AXI GP0          ┌──────────────────┐         │
+│   │ ARM Core 0  │◄──────────────────►│ axi_fbc_ctrl     │         │
+│   │             │    (32-bit)         │ (our registers)  │         │
+│   │ ARM Core 1  │                     └──────────────────┘         │
+│   └─────────────┘    AXI GP1          ┌──────────────────┐         │
+│                  ◄──────────────────►│ axi_io_table     │         │
+│                      (32-bit)         │ (pin config)     │         │
+│                                       └──────────────────┘         │
+│   ┌─────────────┐                                                   │
+│   │ DMA         │    AXI HP0          ┌──────────────────┐         │
+│   │ Controller  │◄══════════════════►│ Vector FIFO      │         │
+│   │             │    (64-bit, fast)   │ (AXI-Stream)     │         │
+│   └─────────────┘                     └──────────────────┘         │
+│                                                                      │
+│   ◄── = AXI4-Lite (registers, slow, simple)                        │
+│   ◄══ = AXI4/AXI-Stream (data, fast, burst)                        │
+└─────────────────────────────────────────────────────────────────────┘
+            </div>
+
+            <h3>AXI Port Types</h3>
+            <table>
+                <thead>
+                    <tr><th>Port</th><th>Width</th><th>Type</th><th>Use</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>M_AXI_GP0</td><td>32-bit</td><td>AXI4-Lite</td><td>PS reads/writes PL registers</td></tr>
+                    <tr><td>M_AXI_GP1</td><td>32-bit</td><td>AXI4-Lite</td><td>More PL registers</td></tr>
+                    <tr><td>S_AXI_HP0-3</td><td>64-bit</td><td>AXI4</td><td>PL accesses DDR (DMA)</td></tr>
+                    <tr><td>S_AXI_ACP</td><td>64-bit</td><td>AXI4</td><td>Cache-coherent DDR access</td></tr>
+                </tbody>
+            </table>
+
+            <div class="highlight">
+                <div class="highlight-title">Our Data Flow</div>
+                <ol style="margin-left: 20px;">
+                    <li>Firmware loads vectors into DDR memory</li>
+                    <li>Firmware configures DMA: "read from DDR address X, send to PL"</li>
+                    <li>DMA streams data through AXI HP0 → PL FIFO</li>
+                    <li>Vector engine pulls from FIFO, drives pins</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- 2016 vs 2026 -->
+        <div class="section">
+            <h2>2016 vs 2026: How We Use the PS</h2>
+
+            <div class="comparison">
+                <div class="compare-box">
+                    <h4>2016 (Sonoma with Linux)</h4>
+                    <pre style="background: transparent; padding: 0; margin: 0; font-size: 0.85rem;">
+Boot: FSBL → U-Boot → Linux
+Time: ~30 seconds
+
+Software Stack:
+├── Linux kernel
+├── Device drivers (AXI, DMA)
+├── TCP/IP stack
+├── Shell scripts
+└── netcat for control
+
+Problems:
+- /tmp fills up → crash
+- eth0 needs restart
+- Complex, many failure points
+- 30s boot per power cycle</pre>
+                </div>
+                <div class="compare-box new">
+                    <h4>2026 (FBC with Bare-metal Rust)</h4>
+                    <pre style="background: transparent; padding: 0; margin: 0; font-size: 0.85rem;">
+Boot: FSBL → Our firmware
+Time: <1 second
+
+Software Stack:
+├── Bare-metal Rust
+├── Direct register access
+├── Minimal TCP (smoltcp)
+└── Custom protocol
+
+Benefits:
+- No filesystem to corrupt
+- No OS overhead
+- Deterministic timing
+- Fast boot, reliable</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Memory Map -->
+        <div class="section">
+            <h2>Memory Map</h2>
+            <p>The ARM sees everything through memory addresses:</p>
+
+            <pre>
+0x00000000 - 0x3FFFFFFF : DDR Memory (up to 1GB)
+0x40000000 - 0x7FFFFFFF : PL AXI Slaves (M_AXI_GP0)
+    0x43C00000 : axi_fbc_ctrl registers (our design)
+    0x43C10000 : axi_io_table registers
+    0x43C20000 : axi_vector_status
+0x80000000 - 0xBFFFFFFF : PL AXI Slaves (M_AXI_GP1)
+0xE0000000 - 0xE02FFFFF : PS Peripherals (UART, SPI, etc)
+0xF8000000 - 0xF8FFFFFF : PS System registers (SLCR, etc)
+0xFFFC0000 - 0xFFFFFFFF : On-chip RAM (256KB)</pre>
+
+            <div class="highlight">
+                <div class="highlight-title">Register Access Example</div>
+                <pre style="background: transparent; margin: 0;">
+// In bare-metal Rust:
+const FBC_CTRL_BASE: u32 = 0x43C0_0000;
+const FBC_STATUS_REG: u32 = FBC_CTRL_BASE + 0x00;
+const FBC_CONTROL_REG: u32 = FBC_CTRL_BASE + 0x04;
+
+// Read status
+let status = unsafe { core::ptr::read_volatile(FBC_STATUS_REG as *const u32) };
+
+// Write control
+unsafe { core::ptr::write_volatile(FBC_CONTROL_REG as *mut u32, 0x01) };</pre>
+            </div>
+        </div>
+
+        <!-- AI Context -->
+        <div class="section">
+            <h2>AI Training Context</h2>
+            <pre>
+LAYER: 2 - Zynq Architecture
+CONCEPTS:
+  - PS: Processing System (ARM Cortex-A9 dual core @ 667MHz)
+  - PL: Programmable Logic (FPGA fabric, 53K LUTs)
+  - AXI: Bus protocol connecting PS and PL
+  - FCLK: PS-generated clocks for PL (FCLK_CLK0=100MHz, FCLK_CLK1=200MHz)
+
+ZYNQ_7020_SPECS:
+  PS:
+    CPU: Dual ARM Cortex-A9 @ 667MHz
+    L2_Cache: 512KB
+    DDR: Up to 1GB DDR3
+    GigE: 2 ports
+    USB: 2 ports
+  PL:
+    LUTs: 53,200
+    FFs: 106,400
+    BRAMs: 140 (4.9Mb)
+    DSPs: 220
+
+AXI_INTERFACES:
+  M_AXI_GP0: 32-bit, PS→PL register access
+  M_AXI_GP1: 32-bit, PS→PL register access
+  S_AXI_HP0-3: 64-bit, PL→DDR high bandwidth
+  S_AXI_ACP: 64-bit, cache-coherent
+
+MEMORY_MAP:
+  DDR: 0x00000000 - 0x3FFFFFFF
+  PL_GP0: 0x40000000 - 0x7FFFFFFF
+  PL_GP1: 0x80000000 - 0xBFFFFFFF
+  PS_PERIPH: 0xE0000000 - 0xE02FFFFF
+
+2016_APPROACH:
+  OS: Linux
+  Boot_time: 30 seconds
+  Control: Shell scripts + netcat
+  Problems: /tmp fills, eth0 restarts needed
+
+2026_APPROACH:
+  OS: Bare-metal Rust
+  Boot_time: <1 second
+  Control: Custom TCP protocol
+  Benefits: No filesystem, deterministic, reliable
+
+QUESTIONS_AI_SHOULD_ANSWER:
+  Q: How does the ARM write to FPGA registers?
+  A: Memory-mapped I/O via AXI GP ports. Write to address 0x43C00000
+     triggers AXI transaction to PL slave at that address.
+
+  Q: How do vectors get from DDR to the FPGA?
+  A: DMA controller reads DDR, streams via AXI HP port to PL FIFO.
+     No CPU involvement during transfer.
+
+  Q: Why bare-metal instead of Linux?
+  A: Speed (1s vs 30s boot), reliability (no filesystem corruption),
+     determinism (no scheduler), simplicity (fewer failure modes).
+
+FILES:
+  2016: reference/kzhang_v2_2016/top.v (PS7 instantiation)
+  2026: firmware/src/lib.rs (register access)
+            </pre>
+        </div>
+
+        <div class="nav-buttons">
+            <a href="layer1_fpga_basics.html" class="nav-btn prev">← Layer 1: FPGA Basics</a>
+            <a href="layer3_io_subsystem.html" class="nav-btn next">Layer 3: I/O Subsystem →</a>
+        </div>
+    </div>
+</body>
+</html>

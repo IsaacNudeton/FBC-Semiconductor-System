@@ -1,0 +1,63 @@
+# Aurora S0034 PowerOff Sequence
+# Board: Aurora PGA Sonoma Air full size BIM (5 DUTs)
+# Generated from SCH#S0034 Rev A (07/13/24)
+#
+# IMPORTANT: Power down in reverse order of PowerOn
+# High current rails off first, then low current, then enables
+
+# ============================================================================
+# STEP 1: Disable HCPS (High Current) first
+# ============================================================================
+/mnt/bin/linux_pmbus_OFF.elf 17   # HCPS VOUT9 -> PS3 OFF
+
+sleep 0.1
+
+# ============================================================================
+# STEP 2: Disable heaters
+# ============================================================================
+/mnt/bin/linux_pmbus_OFF.elf 8    # VOUT8(J6) -> Heater OFF
+
+# ============================================================================
+# STEP 3: Disable LCPS J7 daughter card supplies
+# ============================================================================
+/mnt/bin/linux_pmbus_OFF.elf 16   # VOUT8(J7)
+/mnt/bin/linux_pmbus_OFF.elf 15   # VOUT7(J7)
+/mnt/bin/linux_pmbus_OFF.elf 14   # VOUT6(J7)
+/mnt/bin/linux_pmbus_OFF.elf 13   # VOUT5(J7)
+/mnt/bin/linux_pmbus_OFF.elf 12   # VOUT4(J7)
+/mnt/bin/linux_pmbus_OFF.elf 11   # VOUT3(J7)
+/mnt/bin/linux_pmbus_OFF.elf 10   # VOUT2(J7)
+/mnt/bin/linux_pmbus_OFF.elf 9    # VOUT1(J7)
+
+# ============================================================================
+# STEP 4: Disable LCPS J6 daughter card supplies
+# ============================================================================
+/mnt/bin/linux_pmbus_OFF.elf 7    # VOUT7(J6) -> Daughter DUT2
+/mnt/bin/linux_pmbus_OFF.elf 6    # VOUT6(J6) -> Daughter DUT1
+
+# ============================================================================
+# STEP 5: Disable LCPS J6 PS1 (3.3V) supplies
+# ============================================================================
+/mnt/bin/linux_pmbus_OFF.elf 5    # VOUT5 -> PS1 DUT5
+/mnt/bin/linux_pmbus_OFF.elf 4    # VOUT4 -> PS1 DUT4
+/mnt/bin/linux_pmbus_OFF.elf 3    # VOUT3 -> PS1 DUT3
+/mnt/bin/linux_pmbus_OFF.elf 2    # VOUT2 -> PS1 DUT2
+/mnt/bin/linux_pmbus_OFF.elf 1    # VOUT1 -> PS1 DUT1
+
+sleep 0.1
+
+# ============================================================================
+# STEP 6: Disable core power enables (reverse order)
+# ============================================================================
+/mnt/bin/ToggleMio.elf 37 0    # EN_COREPS6/MIO37 OFF
+/mnt/bin/ToggleMio.elf 38 0    # EN_COREPS5/MIO38 OFF
+/mnt/bin/ToggleMio.elf 39 0    # EN_COREPS4/MIO39 OFF
+/mnt/bin/ToggleMio.elf 47 0    # EN_COREPS3/MIO47 OFF
+
+sleep 0.1
+
+/mnt/bin/ToggleMio.elf 8 0     # EN_COREPS2/MIO8 OFF
+/mnt/bin/ToggleMio.elf 0 0     # EN_COREPS1/MIO0 OFF
+
+echo
+echo "PowerOff complete for Aurora S0034"

@@ -1,0 +1,24 @@
+/mnt/bin/linux_xpll_frequency.elf 1 5000000 0 50        # PATTERN FREQUENCY
+/mnt/bin/linux_xpll_frequency.elf 4 100000000 0 50       # 100MHz
+
+# TURN ON/OFF REFCLKs
+/mnt/bin/linux_xpll_off_on.elf 0 1 0 0
+/mnt/bin/ToggleMio.elf 34 1
+
+# BIDI_PIN    0
+# MONITOR     1
+# DRIVE       2
+# OPEN_C_PIN  3
+# PULSE_PIN   4
+# NPULSE_PIN  5
+# ERROR_TRIG  6
+# VEC_CLK_PIN 7
+
+
+# RZ Clocks
+/mnt/bin/linux_Pulse_Delays.elf 45 4 50 150 200         #TCK
+
+
+# OUTPUTS
+/mnt/bin/linux_pin_type.elf 126 1                       #TDO
+/mnt/bin/linux_pin_type.elf 127 1                       #HSP_BOOT_COMPLETE

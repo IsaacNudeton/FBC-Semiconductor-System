@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Layer 5: Vector Engine</title>
+    <style>
+        :root { --bg: #0a0a0f; --bg-card: #12121a; --accent: #6366f1; --accent2: #8b5cf6; --green: #10b981; --yellow: #f59e0b; --red: #ef4444; --text: #e2e8f0; --text-dim: #64748b; --border: #1e293b; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; padding: 40px; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .breadcrumb { margin-bottom: 30px; }
+        .breadcrumb a { color: var(--accent); text-decoration: none; }
+        h1 { font-size: 2.5rem; margin-bottom: 10px; background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .subtitle { color: var(--text-dim); font-size: 1.1rem; margin-bottom: 40px; }
+        .section { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 30px; margin-bottom: 30px; }
+        .section h2 { color: var(--accent); margin-bottom: 20px; font-size: 1.4rem; }
+        .section h3 { color: var(--text); margin: 25px 0 15px; font-size: 1.1rem; }
+        p { margin-bottom: 15px; }
+        pre { background: #0a0a0f; padding: 20px; border-radius: 8px; overflow-x: auto; font-family: 'Fira Code', monospace; font-size: 0.85rem; margin: 15px 0; line-height: 1.5; }
+        code { background: #1a1a2a; padding: 2px 8px; border-radius: 4px; font-family: 'Fira Code', monospace; color: var(--green); }
+        .diagram { background: #0a0a0f; padding: 20px; border-radius: 8px; font-family: 'Fira Code', monospace; font-size: 0.8rem; white-space: pre; overflow-x: auto; line-height: 1.3; }
+        .highlight { background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1)); border: 1px solid var(--accent); border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .highlight-title { color: var(--accent); font-weight: 600; margin-bottom: 10px; }
+        .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }
+        .compare-box { background: #0a0a0f; border-radius: 8px; padding: 20px; border-left: 3px solid var(--green); }
+        .compare-box.new { border-left-color: var(--accent); }
+        .compare-box h4 { margin-bottom: 10px; color: var(--text-dim); font-size: 0.9rem; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { background: var(--bg); color: var(--text-dim); text-transform: uppercase; font-size: 0.8rem; }
+        .nav-buttons { display: flex; justify-content: space-between; margin-top: 40px; }
+        .nav-btn { padding: 15px 30px; border-radius: 8px; text-decoration: none; font-weight: 500; transition: all 0.3s; }
+        .nav-btn.prev { background: var(--bg-card); border: 1px solid var(--border); color: var(--text); }
+        .nav-btn.next { background: var(--accent); color: white; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="breadcrumb"><a href="index.html">← Learning Hub</a></div>
+
+        <h1>Layer 5: Vector Engine</h1>
+        <p class="subtitle">How test patterns flow from memory to pins. The core execution unit.</p>
+
+        <div style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(15, 52, 96, 0.2)); border: 1px solid #10b981; border-radius: 8px; padding: 15px; margin-bottom: 30px;">
+            <strong style="color: #10b981;">✓ FBC Decoder Tested:</strong> SET_PINS, HALT opcodes verified with behavioral simulator. 2 tests passing.
+        </div>
+
+        <!-- Data Flow -->
+        <div class="section">
+            <h2>Vector Data Flow</h2>
+            <div class="diagram">
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           COMPLETE DATA PATH                                 │
+│                                                                              │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────┐ │
+│  │   DDR    │    │   DMA    │    │   FIFO   │    │  Vector  │    │ I/O  │ │
+│  │  Memory  │───►│Controller│═══►│  Buffer  │───►│  Engine  │───►│Cells │ │
+│  │          │    │          │    │          │    │          │    │      │ │
+│  │ vectors  │    │ AXI HP0  │    │ 256x288  │    │ decode   │    │ 160  │ │
+│  │ stored   │    │ 64-bit   │    │ entries  │    │ execute  │    │ pins │ │
+│  └──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────┘ │
+│       │                                               │                     │
+│       │              ARM configures                   │                     │
+│       └──────────────────────────────────────────────►│                     │
+│                    start address,                  results                  │
+│                    length, go                      status                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+            </div>
+
+            <h3>Step by Step</h3>
+            <ol style="margin-left: 20px;">
+                <li><strong>ARM loads vectors</strong> into DDR memory</li>
+                <li><strong>ARM configures DMA</strong>: source address, length</li>
+                <li><strong>ARM writes "GO"</strong> to control register</li>
+                <li><strong>DMA streams</strong> vectors to FIFO via AXI HP</li>
+                <li><strong>Vector Engine pulls</strong> from FIFO on each vec_clk</li>
+                <li><strong>I/O cells drive/compare</strong> based on vector data</li>
+                <li><strong>Errors counted</strong> and logged</li>
+            </ol>
+        </div>
+
+        <!-- Vector Format -->
+        <div class="section">
+            <h2>Vector Format</h2>
+
+            <div class="comparison">
+                <div class="compare-box">
+                    <h4>2016 Format (288 bits per vector)</h4>
+                    <pre style="background:transparent;padding:0;margin:0;">
+┌────────────────────────────────────┐
+│  REPEAT [287:256] - 32 bits       │
+│  How many times to repeat          │
+├────────────────────────────────────┤
+│  EXPECTED [255:128] - 128 bits    │
+│  What we expect to read            │
+├────────────────────────────────────┤
+│  DATA [127:0] - 128 bits          │
+│  What to drive on pins             │
+└────────────────────────────────────┘
+
+Total: 288 bits = 36 bytes per vector</pre>
+                </div>
+                <div class="compare-box new">
+                    <h4>2026 FBC Format (compressed)</h4>
+                    <pre style="background:transparent;padding:0;margin:0;">
+┌────────────────────────────────────┐
+│  OPCODE [7:0] - 8 bits            │
+│  What operation to perform         │
+├────────────────────────────────────┤
+│  OPERAND [variable]               │
+│  Data for the operation            │
+└────────────────────────────────────┘
+
+Examples:
+  PATTERN_REP: 1 + 36 = 37 bytes
+    (opcode + full vector)
+  SET_PINS: 1 + 16 = 17 bytes
+    (opcode + 128-bit data)
+  WAIT: 1 + 4 = 5 bytes
+    (opcode + cycle count)
+  LOOP_N: 1 + 4 = 5 bytes
+    (opcode + iteration count)
+
+Compression: 10-100x smaller</pre>
+                </div>
+            </div>
+
+            <div class="highlight">
+                <div class="highlight-title">Why FBC Compression Matters</div>
+                <p>A burn-in test might run millions of vectors. At 36 bytes each:</p>
+                <ul style="margin-left: 20px;">
+                    <li>1M vectors × 36 bytes = 36 MB (raw)</li>
+                    <li>1M vectors with FBC = ~1 MB (typical)</li>
+                </ul>
+                <p>Less memory, less DMA bandwidth, faster loading.</p>
+            </div>
+        </div>
+
+        <!-- 2016 Engine -->
+        <div class="section">
+            <h2>2016 Implementation</h2>
+            <p>From <code>reference/kzhang_v2_2016/top.v</code>:</p>
+
+            <pre>
+// Vector streaming from DMA (simplified from top.v)
+wire [287:0] vec_data;           // Full vector from FIFO
+wire         vec_valid;          // FIFO has data
+wire         vec_ready;          // Engine ready for next
+
+// Unpack vector fields
+wire [127:0] vec_drive    = vec_data[127:0];
+wire [127:0] vec_expected = vec_data[255:128];
+wire [31:0]  vec_repeat   = vec_data[287:256];
+
+// Repeat counter
+reg [31:0] repeat_count;
+
+always @(posedge vec_clk) begin
+    if (vec_valid && vec_ready) begin
+        if (repeat_count == 0) begin
+            // Load new vector
+            repeat_count <= vec_repeat;
+            current_drive <= vec_drive;
+            current_expected <= vec_expected;
+        end else begin
+            // Repeat current vector
+            repeat_count <= repeat_count - 1;
+        end
+    end
+end
+
+// Ready for next vector when repeat exhausted
+assign vec_ready = (repeat_count == 0);</pre>
+        </div>
+
+        <!-- 2026 FBC Engine -->
+        <div class="section">
+            <h2>2026 FBC Implementation</h2>
+            <p>Our FBC decoder is more sophisticated - it interprets opcodes:</p>
+
+            <pre>
+// From rtl/fbc_decoder.v (simplified)
+
+localparam OP_PATTERN_REP = 8'hB5;
+localparam OP_LOOP_N      = 8'hB0;
+localparam OP_SET_PINS    = 8'hC0;
+localparam OP_WAIT        = 8'hD0;
+localparam OP_HALT        = 8'hFF;
+
+reg [2:0] state;
+localparam FETCH = 0, DECODE = 1, EXECUTE = 2;
+
+always @(posedge clk) begin
+    case (state)
+        FETCH: begin
+            if (fifo_valid) begin
+                opcode <= fifo_data[7:0];
+                state <= DECODE;
+            end
+        end
+
+        DECODE: begin
+            case (opcode)
+                OP_PATTERN_REP: begin
+                    // Next 288 bits are vector + repeat count
+                    load_vector <= 1;
+                    state <= EXECUTE;
+                end
+
+                OP_SET_PINS: begin
+                    // Next 128 bits are pin values
+                    pins_out <= fifo_data[127:0];
+                    state <= FETCH;
+                end
+
+                OP_WAIT: begin
+                    // Next 32 bits are cycle count
+                    wait_count <= fifo_data[31:0];
+                    state <= EXECUTE;
+                end
+
+                OP_HALT: begin
+                    running <= 0;
+                    state <= FETCH;
+                end
+            endcase
+        end
+
+        EXECUTE: begin
+            // Handle repeats, waits, loops
+            if (repeat_count > 0) begin
+                repeat_count <= repeat_count - 1;
+                // Apply current vector
+            end else begin
+                state <= FETCH;
+            end
+        end
+    endcase
+end</pre>
+        </div>
+
+        <!-- FIFO -->
+        <div class="section">
+            <h2>The FIFO Buffer</h2>
+            <p>Between DMA and engine sits a FIFO to decouple the two clock domains:</p>
+
+            <div class="diagram">
+     AXI Clock Domain              Vector Clock Domain
+     (100 MHz)                     (variable, e.g. 50 MHz)
+           │                              │
+           ▼                              ▼
+    ┌──────────────────────────────────────────────┐
+    │                  ASYNC FIFO                   │
+    │  ┌────┬────┬────┬────┬────┬────┬────┬────┐  │
+    │  │ V0 │ V1 │ V2 │ V3 │ V4 │    │    │    │  │
+    │  └────┴────┴────┴────┴────┴────┴────┴────┘  │
+    │    ▲                              │          │
+    │    │ write_ptr                    │ read_ptr │
+    │                                              │
+    │  Depth: 256 entries                          │
+    │  Width: 288 bits (or 64 for FBC stream)      │
+    └──────────────────────────────────────────────┘
+            </div>
+
+            <h3>Why Async FIFO?</h3>
+            <ul style="margin-left: 20px;">
+                <li><strong>Clock domain crossing</strong> - AXI at 100MHz, vec_clk at variable rate</li>
+                <li><strong>Burst absorption</strong> - DMA bursts faster than execution</li>
+                <li><strong>Flow control</strong> - Backpressure when FIFO full</li>
+            </ul>
+
+            <pre>
+// From reference - FIFO parameters
+`define DMA_MAX_BURST    128      // DMA burst size
+`define FIFO_LENGTH      256      // 2x burst for buffering
+`define FIFO_SYNC_STAGES 2        // For clock crossing</pre>
+        </div>
+
+        <!-- AI Context -->
+        <div class="section">
+            <h2>AI Training Context</h2>
+            <pre>
+LAYER: 5 - Vector Engine
+CONCEPTS:
+  - Vector: Test pattern (drive values + expected values + repeat)
+  - DMA: Direct Memory Access (ARM configures, hardware moves data)
+  - FIFO: First-In-First-Out buffer for clock domain crossing
+  - FBC: FORCE Bytecode (compressed instruction format)
+
+VECTOR_FORMAT_2016:
+  Width: 288 bits (36 bytes)
+  Fields:
+    [127:0]: Drive data (what to output)
+    [255:128]: Expected data (what to compare)
+    [287:256]: Repeat count
+
+FBC_OPCODES:
+  0xB5 PATTERN_REP: Full vector with repeat
+  0xB0 LOOP_N: Loop next N instructions
+  0xB6 PATTERN_SEQ: Sequential pattern generator
+  0xC0 SET_PINS: Set pin values directly
+  0xC1 SET_OEN: Set output enables
+  0xD0 WAIT: Wait N cycles
+  0xFF HALT: Stop execution
+
+DATA_PATH:
+  DDR → DMA → AXI_HP → FIFO → Vector_Engine → I/O_Cells → Pins
+
+FIFO_SPECS:
+  Depth: 256 entries
+  Width: 288 bits (2016) or 64 bits (FBC stream)
+  Type: Async (dual clock)
+  Purpose: Clock domain crossing + burst buffering
+
+2016_FILES:
+  reference/kzhang_v2_2016/top.v (vector handling embedded)
+  reference/kzhang_v2_2016/vector.vh (defines)
+
+2026_FILES:
+  rtl/fbc_decoder.v ✓ TESTED (opcode decoder - SET_PINS, HALT working)
+  rtl/vector_engine.v (execution engine - to integrate)
+  rtl/axi_stream_fbc.v (FIFO interface - to build)
+
+QUESTIONS_AI_SHOULD_ANSWER:
+  Q: Why use DMA instead of CPU copying?
+  A: Speed and CPU freedom. DMA moves data at bus speed
+     while CPU does other work. No per-byte overhead.
+
+  Q: What happens if FIFO underflows?
+  A: Vector engine stalls, waiting for data. Test timing
+     is disrupted. Must size FIFO to prevent this.
+
+  Q: How does FBC compression work?
+  A: Instead of raw vectors, send opcodes. LOOP_N can
+     represent 1000 vectors with 5 bytes. WAIT replaces
+     repeated identical vectors.
+
+EXERCISES:
+  1. Calculate memory savings: 1M vectors raw vs FBC with
+     50% loops, 30% repeats, 20% unique patterns
+  2. Design a FIFO watermark: when to request more DMA
+  3. Trace data flow for a PATTERN_REP instruction
+            </pre>
+        </div>
+
+        <div class="nav-buttons">
+            <a href="layer4_clock_generation.html" class="nav-btn prev">← Layer 4: Clock Generation</a>
+            <a href="layer6_axi_interfaces.html" class="nav-btn next">Layer 6: AXI Interfaces →</a>
+        </div>
+    </div>
+</body>
+</html>

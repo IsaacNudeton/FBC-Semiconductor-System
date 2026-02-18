@@ -1,0 +1,29 @@
+/mnt/bin/linux_IO_PS.elf 0 0 0 0
+
+/mnt/bin/linux_pmbus_OFF.elf 11      # VPAM4IO
+/mnt/bin/linux_pmbus_OFF.elf 6       # VHBM_0P4
+/mnt/bin/linux_pmbus_OFF.elf 5       # VHBM_1P8
+/mnt/bin/linux_pmbus_OFF.elf 4       # VPLLHV1P2
+/mnt/bin/linux_pmbus_OFF.elf 10      # VHBM_1p1
+/mnt/bin/linux_pmbus_OFF.elf 3       # VPCI1P2
+/mnt/bin/linux_pmbus_OFF.elf 15      # VPCI0P75
+/mnt/bin/linux_pmbus_OFF.elf 7       # VPAM4T
+/mnt/bin/linux_pmbus_OFF.elf 14      # VPAM4A-VPAM4D
+/mnt/bin/linux_pmbus_OFF.elf 13      # VHBMD
+/mnt/bin/linux_pmbus_OFF.elf 9       # VRAM
+
+/mnt/bin/linux_VICOR.elf 0.0 8 8     # VCONST
+/mnt/bin/linux_VICOR.elf 0.0 0 9     # VENG
+
+/mnt/bin/linux_pmbus_OFF.elf 2       # HVIO1P2-VTHERM1P2
+/mnt/bin/linux_pmbus_OFF.elf 1       # VOSC
+
+
+
+
+
+
+
+
+
+																	

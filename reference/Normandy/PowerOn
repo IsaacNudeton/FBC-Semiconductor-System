@@ -1,0 +1,32 @@
+/mnt/bin/linux_pmbus_PicoDlynx.elf 8 5.0        # VTHERM
+/mnt/bin/linux_pmbus_PicoDlynx.elf 1 1.8        # VOSC
+
+/mnt/bin/linux_pmbus_PicoDlynx.elf 2 1.32       # HVIO1P2-VTHERM1P2
+/mnt/bin/linux_VICOR.elf 1.1 0 9                # VENG
+/mnt/bin/linux_pmbus_PicoDlynx.elf 9 1.194      # VRAM
+/mnt/bin/linux_VICOR.elf 1.08 8 8               # VCONST
+/mnt/bin/linux_pmbus_PicoDlynx.elf 14 0.9	# VPAM4A-VPAM4D
+/mnt/bin/linux_pmbus_PicoDlynx.elf 7 1.0        # VPAM4T
+/mnt/bin/linux_pmbus_PicoDlynx.elf 13 1.1       # VHBMD
+/mnt/bin/linux_pmbus_PicoDlynx.elf 15 0.9	# VPCI0P75
+/mnt/bin/linux_pmbus_PicoDlynx.elf 3 1.32       # VPCI1P2
+/mnt/bin/linux_pmbus_PicoDlynx.elf 11 1.21      # VPAM4IO
+/mnt/bin/linux_pmbus_PicoDlynx.elf 4 1.32       # VPLLHV1P2
+/mnt/bin/linux_pmbus_PicoDlynx.elf 5 1.98       # VHBM_1P8
+/mnt/bin/linux_pmbus_PicoDlynx.elf 10 1.21      # VHBM_1p1
+/mnt/bin/linux_pmbus_PicoDlynx.elf 10 1.21      # VHBM_1p1
+/mnt/bin/linux_pmbus_PicoDlynx.elf 6 0.6        # VHBM_0P4
+
+
+/mnt/bin/linux_IO_PS.elf 1.2 1.2 1.2 2.0
+
+echo 
+echo 
+echo ADC 0-15
+/mnt/bin/ADC32ChPlusStats.elf
+echo 
+echo 
+echo XADC 0-15
+/mnt/bin/XADC32Ch.elf
+echo 
+echo 

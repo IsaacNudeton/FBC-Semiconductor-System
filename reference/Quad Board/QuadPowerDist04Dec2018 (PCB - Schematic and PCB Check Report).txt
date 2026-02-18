@@ -1,0 +1,17 @@
+Schematic and PCB Check Report
+------------------------------
+
+Report Written:     Friday, December 07, 2018
+Design Path:        C:\Users\lance\Dropbox\Volt\Quad Board\QuadPowerDist04Dec2018.pcb
+Design Title:       
+Created:            11/25/2013 4:20:32 PM
+Last Saved:         12/7/2018 1:39:06 PM
+Editing Time:       35245 min
+Units:              mil (precision 1)
+
+
+Checking integrity of Schematic "C:\Users\lance\Dropbox\Volt\Quad Board\QuadPowerDist04Dec2018.sch" with PCB "C:\Users\lance\Dropbox\Volt\Quad Board\QuadPowerDist04Dec2018.pcb"
+================================================================================================================================================================================
+
+
+End Of Report.

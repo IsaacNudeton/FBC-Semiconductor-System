@@ -1,0 +1,124 @@
+.terminal {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 320px; /* Account for status panel */
+  background: #0d0d0d;
+  border-top: 1px solid var(--bg-tertiary);
+  transition: height 0.3s ease;
+  z-index: 100;
+}
+
+.terminal.open {
+  height: 250px;
+}
+
+.terminal.closed {
+  height: 32px;
+}
+
+.terminal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.terminal-header:hover {
+  background: var(--bg-tertiary);
+}
+
+.terminal-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.terminal-toggle {
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.terminal-body {
+  display: flex;
+  flex-direction: column;
+  height: calc(100% - 32px);
+}
+
+.terminal-output {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.terminal-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.terminal-line.input {
+  color: var(--accent);
+}
+
+.terminal-line.output {
+  color: var(--text-primary);
+}
+
+.terminal-line.error {
+  color: var(--error);
+}
+
+.terminal-input-form {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  background: #151515;
+  border-top: 1px solid #222;
+}
+
+.terminal-prompt {
+  color: var(--success);
+  font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  margin-right: 8px;
+}
+
+.terminal-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: 'Monaco', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+}
+
+.terminal-input::placeholder {
+  color: #444;
+}
+
+/* Scrollbar styling */
+.terminal-output::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terminal-output::-webkit-scrollbar-track {
+  background: #111;
+}
+
+.terminal-output::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+
+.terminal-output::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}

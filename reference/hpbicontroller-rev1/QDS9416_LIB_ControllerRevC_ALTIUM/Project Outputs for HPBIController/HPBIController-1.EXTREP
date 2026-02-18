@@ -1,0 +1,32 @@
+------------------------------------------------------------------------------------------
+Gerber File Extension Report For: HPBIController-1.GBR   10/10/2019  9:19:36 AM
+------------------------------------------------------------------------------------------
+
+
+------------------------------------------------------------------------------------------
+Layer Extension     Layer Description                      
+------------------------------------------------------------------------------------------
+.GTO                Top Overlay                             
+.GTP                Top Paste                               
+.GTS                Top Solder                              
+.GTL                Component Side                          
+.GP1                Plane 1 (GND)                           
+.G1                 Inner Signal Layer 1                    
+.GP2                Plane 2 (GND)                           
+.GP3                Plane 3 (Power)                         
+.G2                 Inner Signal Layer 2                    
+.GP4                Plane 4 (GND)                           
+.GP5                Plane 5 (Power)                         
+.G3                 Inner Signal Layer 3                    
+.GP6                Plane 6 (Power)                         
+.GP7                Plane 7 (GND)                           
+.G4                 Inner Signal Layer 4                    
+.GP8                Plane 8 (GND)                           
+.GBL                Solder Side                             
+.GBS                Bottom Solder                           
+.GBP                Bottom Paste                            
+.GBO                Bottom Overlay                          
+.GM7                Mechanical 7                            
+.GD1                Drill Drawing                           
+.GG1                Drill Guide                             
+------------------------------------------------------------------------------------------

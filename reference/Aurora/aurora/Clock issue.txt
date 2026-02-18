@@ -1,0 +1,90 @@
+● Found it. Looking at page 1 of the schematic:
+
+  UA3.1 = OPA695 (High-Speed Op-Amp)
+
+  This is part of the Current_Monitor_Circuit for PS3 [HCPS(VOUT9)].
+
+                      +5V (pin 7)
+                        │
+           R14.1       ┌┴┐
+           511Ω    ┌───┤ ├───┐
+             ┌─────┤   │UA3.1│
+             │     │ - │OPA695├──── OUT (pin 6)
+      ───────┼─────┤   │      │
+             │     │ + │      │
+             │     └───┤      │
+             │         └──────┘
+             │            │
+             └────────────┘ (feedback)
+                          │
+                        -VS (pin 4, Negative supply)
+
+  R15.1 = 0Ω - Zero-ohm jumper in the input path from LCPS to the circuit.
+
+  ---
+  Root Cause: OPA695 Instability
+
+  The OPA695 is a current-feedback amplifier (CFA) with:
+  - 1.4 GHz bandwidth
+  - 4100 V/µs slew rate
+
+  CFAs are notoriously sensitive to:
+  1. Feedback resistor value
+  2. Capacitive loading
+  3. PCB parasitics
+
+  Why 3 MHz AND 1.5 MHz?
+
+  The 3 MHz is likely a parasitic oscillation. The 1.5 MHz could be:
+  - The intended signal being amplitude-modulated by the oscillation
+  - A subharmonic of the 3 MHz oscillation
+  - Interaction between the oscillation and the signal
+
+  R15 (0Ω) toggling confirms the oscillation is coupling back through the input path.
+
+  ---
+  Solutions (Pick One or Combine)
+
+  Fix 1: Add Compensation Capacitor to Feedback
+
+  Add 2-5pF in parallel with R14 (511Ω):
+
+  Before:           After:
+      R14               R14
+     511Ω              511Ω
+    ──┬──             ──┬──
+      │                 │
+      │               ──┴──
+      │               │ C │ 2-5pF
+      │               ──┬──
+      │                 │
+
+  This rolls off high-frequency gain and kills the oscillation.
+
+  Fix 2: Change R14 Value
+
+  The OPA695 datasheet recommends Rf = 402Ω for stability at gain of +2. Try:
+  - 402Ω or 470Ω instead of 511Ω
+
+  Fix 3: Add Output Isolation Resistor
+
+  Add 22-47Ω in series with UA3 output before any capacitive load:
+
+  UA3 OUT ───[22Ω]───► to load
+
+  Fix 4: Replace R15 (0Ω) with Small Resistance
+
+  Change R15 from 0Ω to 10-22Ω. This adds damping to the input and breaks the oscillation feedback path.
+
+  Fix 5: Check/Add Decoupling
+
+  Ensure 0.1µF ceramic is placed directly at UA3 pins 7 (+VS) and 4 (-VS) to GND. The schematic shows "Negative supply" label but I don't see explicit decoupling for UA3.
+
+  ---
+  Recommended First Try
+
+  Change R14 from 511Ω to 402Ω and add 3.3pF in parallel with it.
+
+  If that doesn't work, also replace R15 (0Ω) with 22Ω.
+
+  The OPA695 is a beast - extremely fast but demanding on layout and component selection. The 511Ω feedback resistor is slightly higher than TI's recommended 402Ω, which reduces phase margin and can cause exactly this oscillation behavior.
