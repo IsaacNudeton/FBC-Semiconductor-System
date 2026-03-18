@@ -97,6 +97,12 @@ pub mod vector {
     pub const STOP: u8 = 0xB7;
 }
 
+/// Error log commands (read error BRAM contents)
+pub mod error_log {
+    pub const ERROR_LOG_REQ: u8 = 0x4A;  // GUI → Controller (start_index, count)
+    pub const ERROR_LOG_RSP: u8 = 0x4B;  // Controller → GUI (error entries)
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -168,6 +174,10 @@ pub struct BoardStatus {
     pub cycles: u32,
     pub errors: u32,
     pub temp_c: f32,
+    /// Rail voltages in mV: [Core1..Core6, VDD_IO, VDD_3V3]
+    pub rail_voltage_mv: [u16; 8],
+    /// Rail currents in mA: [Core1..Core6, 0, 0]
+    pub rail_current_ma: [u16; 8],
     pub fpga_vccint_mv: u16,
     pub fpga_vccaux_mv: u16,
 }
@@ -581,6 +591,34 @@ impl FbcSocket {
 
         Ok(None)
     }
+}
+
+// =============================================================================
+// Error Log Types
+// =============================================================================
+
+/// Error log entry from BRAM
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorLogEntry {
+    /// 128-bit pattern value (4 × 32-bit words)
+    pub pattern: [u32; 4],
+    /// Vector number when error occurred
+    pub vector: u32,
+    /// Cycle count low
+    pub cycle_lo: u32,
+    /// Cycle count high
+    pub cycle_hi: u32,
+}
+
+/// Error log response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorLogResponse {
+    /// Total errors recorded
+    pub total_errors: u32,
+    /// Number of entries in this response (max 8)
+    pub num_entries: u32,
+    /// Error entries
+    pub entries: Vec<ErrorLogEntry>,
 }
 
 // =============================================================================

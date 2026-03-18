@@ -18,6 +18,7 @@ ENTRY(_start)
 
 /* Stack and heap sizes */
 _stack_size = 64K;
+_irq_stack_size = 4K;
 _heap_size = 64K;
 
 SECTIONS
@@ -73,6 +74,14 @@ SECTIONS
         _stack_start = .;
     } > DDR
 
+    /* IRQ mode stack (separate from main stack) */
+    .irq_stack (NOLOAD) : ALIGN(8)
+    {
+        _irq_stack_end = .;
+        . += _irq_stack_size;
+        _irq_stack_start = .;
+    } > DDR
+
     /* DMA buffers in OCM for cache coherency */
     .dma_buffers (NOLOAD) : ALIGN(32)
     {
@@ -93,5 +102,6 @@ SECTIONS
 
 /* Provide symbols for startup code */
 PROVIDE(_stack_top = _stack_start);
+PROVIDE(_irq_stack_top = _irq_stack_start);
 PROVIDE(_heap_bottom = _heap_start);
 PROVIDE(_heap_top = _heap_end);

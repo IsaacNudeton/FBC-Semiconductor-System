@@ -17,6 +17,7 @@
 //   0x20: FAST_DOUT - Fast pin drive values (R/W)
 //   0x24: FAST_OEN  - Fast pin output enables (R/W)
 //   0x28: FAST_DIN  - Fast pin input states (RO)
+//   0x2C: FAST_ERR  - Fast pin error flags (RO)
 //
 //=============================================================================
 
@@ -81,7 +82,8 @@ module axi_fbc_ctrl #(
     //=========================================================================
     output reg [31:0] fast_dout,        // Fast pin drive values
     output reg [31:0] fast_oen,         // Fast pin output enables (1=output)
-    input wire [31:0] fast_din          // Fast pin input states (active levels)
+    input wire [31:0] fast_din,         // Fast pin input states (active levels)
+    input wire [31:0] fast_error        // Fast pin error flags (from io_bank)
 );
 
     //=========================================================================
@@ -98,6 +100,7 @@ module axi_fbc_ctrl #(
     localparam REG_FAST_DOUT = 8'h20;
     localparam REG_FAST_OEN  = 8'h24;
     localparam REG_FAST_DIN  = 8'h28;
+    localparam REG_FAST_ERR  = 8'h2C;
 
     // State Machine Definitions
     localparam WR_IDLE = 2'd0;
@@ -259,6 +262,9 @@ module axi_fbc_ctrl #(
                         end
                         REG_FAST_DIN: begin
                             rdata <= fast_din;
+                        end
+                        REG_FAST_ERR: begin
+                            rdata <= fast_error;
                         end
                         default: begin
                             rdata <= 32'hDEADBEEF;

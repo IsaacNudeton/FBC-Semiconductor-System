@@ -22,6 +22,16 @@
 //! | 0xC0   | SET_PINS    | Set 128-bit pin values         |
 //! | 0xB5   | PATTERN_REP | Repeat current pattern N times |
 //! | 0xFF   | HALT        | End program                    |
+//!
+//! # Unsupported Opcodes
+//!
+//! The following FBC opcodes are defined but not implemented in hardware:
+//! - `0xB0` (LOOP_N): Requires instruction buffer/PC replay (not in fbc_decoder.v)
+//! - `0xD1` (SYNC): External trigger wait (not implemented)
+//! - `0xE0` (IMM32): 32-bit immediate (not implemented)
+//! - `0xE1` (IMM128): 128-bit immediate (not implemented)
+//!
+//! The decompressor will return `LoaderError::InvalidOpcode` if these are encountered.
 
 use crate::fbc::FbcInstr;
 

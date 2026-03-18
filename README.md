@@ -8,13 +8,55 @@ FPGA-based burn-in test system for ~500 Zynq 7020 controllers. Modernizing the 2
 |-----------|----------|-------|
 | RTL Core | 85% | I/O subsystem, clock gen, ARM interface complete |
 | Testbenches | 40% | Decoder, io_cell, io_bank, clk_gen, top |
-| Firmware | 45% | HAL complete (12 drivers), FBC Protocol implemented |
+| Firmware | 90% | HAL complete (17 drivers), FBC Protocol implemented, **running on hardware** |
 | FPGA Toolchain | 99% | ONETWO routing complete (3,488 frames validated) |
-| Host CLI | 20% | FBC Protocol structures defined |
-| FBC System GUI | 0% | Planned (egui/Tauri), docs complete |
-| Vector Converters | 100% | fbc-vec tool: STIL/AVC/PAT/APS → FBC/Sonoma/PAT (tested, 145-95,952x compression) |
+| **Host CLI** | **100%** | **28 FBC commands + 20 Sonoma + profile — fully implemented** |
+| FBC System GUI | 100% | Tauri + React, 57 commands, Pattern Converter + Pin Import integrated |
+| Pattern Converter | 100% | ATP/STIL/AVC → `.hex` ✅, `.fbc` ✅, CSV/Excel/PDF → Pin Import ✅ |
+| Vector Converters (Rust) | 100% | `.fvec` → `.fbc` (tested, 4.8-710x compression) |
 
-See `TODO.md` for detailed roadmap.
+**✅ March 2026:** First Light achieved — firmware running on Zynq 7020 (CPU @ 667MHz, DDR @ 533MHz)
+**✅ March 2026:** Pattern Converter complete — `gen_fbc.c` added, outputs `.fbc` compressed format
+**✅ March 2026:** Host CLI complete — all 28 FBC commands implemented (pause, resume, pmbus, eeprom-write, firmware-update, log-info, read-log)
+
+---
+
+## ⚠️ Pattern Converter Gap
+
+**UPDATE March 2026:** This gap has been **FIXED**. `gen_fbc.c` exists and is integrated.
+
+~~**Problem:** Customer patterns (ATP/STIL/AVC) cannot be converted to `.fbc` (compressed FBC format).~~
+
+~~```
+ATP/STIL/AVC ──▶ C Engine (gui/src-tauri/c-engine/pc/) ──▶ .hex + .seq ✅
+                                                              │
+                                                              ▼
+                                                        Legacy system
+                                                              │
+                                                              ❌
+                                                              │
+                                                        .fbc format
+                                                              ▲
+                                                              │
+.fvec ──▶ Rust (host/src/vector/) ──▶ .fbc ✅─────────────────┘
+```~~
+
+~~**Why This Matters:**~~
+~~`.hex` = 40 bytes/vector (uncompressed, legacy Sonoma format)~~
+~~`.fbc` = 1-21 bytes/vector (compressed: VECTOR_ZERO=1B, VECTOR_RUN=5B, VECTOR_SPARSE=2+N bytes)~~
+~~**Compression:** 4.8-710x smaller (verified: test_core.fbc = 77KB vs 55MB uncompressed)~~
+~~**Migration:** All existing ATP/STIL/AVC patterns need `.fbc` for FBC system~~
+
+~~**Implementation Status:**~~
+| Converter | Input | Output | Status |
+|-----------|-------|--------|--------|
+| C Engine (`gui/src-tauri/c-engine/pc/`) | ATP/STIL/AVC | `.hex` + `.seq` | ✅ Complete (14 C files) |
+| Rust Compiler (`host/src/vector/`) | `.fvec` | `.fbc` | ✅ Complete |
+| **gen_fbc.c** (`gui/src-tauri/c-engine/pc/`) | PcPattern IR | `.fbc` | ✅ **Complete March 2026** |
+
+~~**Recommended Fix:** Add `gen_fbc.c` to `gui/src-tauri/c-engine/pc/` — outputs `.fbc` opcodes directly from C engine. — **DONE**~~
+
+---
 
 ## Architecture
 

@@ -97,7 +97,9 @@ module fbc_decoder #(
                     `FBC_HALT:        next_state = S_DONE;
                     `FBC_SET_PINS:    next_state = S_EXECUTE;
                     `FBC_SET_OEN:     next_state = S_EXECUTE;
-                    `FBC_SET_BOTH:    next_state = S_EXECUTE;
+                    // SET_BOTH requires 256-bit payload (dout+oen) but bus is 128-bit.
+                    // Use SET_PINS + SET_OEN separately. Re-enable when bus is widened.
+                    `FBC_SET_BOTH:    next_state = S_ERROR;
                     `FBC_PATTERN_REP: next_state = S_EXECUTE;
                     `FBC_WAIT:        next_state = S_EXECUTE;
                     `FBC_LOOP_N:      next_state = S_LOOP;
@@ -226,15 +228,8 @@ module fbc_decoder #(
                             cycle_count <= cycle_count + 1;
                         end
 
-                        `FBC_SET_BOTH: begin
-                            current_dout <= fbc_payload[VECTOR_WIDTH-1:0];
-                            current_oen <= fbc_payload[2*VECTOR_WIDTH-1:VECTOR_WIDTH];
-                            vec_dout <= fbc_payload[VECTOR_WIDTH-1:0];
-                            vec_oen <= fbc_payload[2*VECTOR_WIDTH-1:VECTOR_WIDTH];
-                            vec_repeat <= 32'd1;
-                            vec_valid <= 1'b1;
-                            cycle_count <= cycle_count + 1;
-                        end
+                        // FBC_SET_BOTH removed — requires 256-bit payload,
+                        // bus only carries 128. Use SET_PINS + SET_OEN instead.
 
                         `FBC_PATTERN_REP: begin
                             // Repeat current pattern N times

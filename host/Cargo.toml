@@ -30,6 +30,8 @@ tokio = { version = "1", features = ["full", "sync"] }
 # Serialization
 byteorder = "1.5"
 crc32fast = "1.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # Error handling
 thiserror = "2.0"
@@ -41,6 +43,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+
+# SSH (for Sonoma legacy boards)
+russh = "0.42"
+russh-keys = "0.42"
+async-trait = "0.1"
 
 # MAC address parsing
 macaddr = "1.0"

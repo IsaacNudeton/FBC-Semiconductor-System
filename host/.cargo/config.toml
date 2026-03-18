@@ -1,5 +1,5 @@
 [target.x86_64-pc-windows-gnu]
-rustflags = ["-L", "C:/Dev/npcap-sdk/Lib/x64"]
+rustflags = ["-L", "C:/Dev/tools/npcap-sdk/Lib/x64"]
 
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-L", "C:/Dev/npcap-sdk/Lib/x64"]
+rustflags = ["-L", "C:/Dev/tools/npcap-sdk/Lib/x64"]

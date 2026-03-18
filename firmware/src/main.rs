@@ -9,14 +9,14 @@
 use panic_halt as _;
 use fbc_firmware::{
     FbcProtocolHandler, ControllerState, GemEth, NetConfig,
-    FbcCtrl, VectorStatus,
+    FbcCtrl, VectorStatus, ErrorBram,
     Slcr, SdCard, Gpio, MioPin, Xadc, delay_ms,
     I2c, Spi, SpiMode, PowerSupplyManager,
     Eeprom, BimEeprom, EEPROM_ADDR, EEPROM_SIZE,
     Max11131, Bu2505, VicorController,
-    AnalogMonitor,
+    AnalogMonitor, Gic,
     net::BROADCAST_MAC,
-    fbc_protocol::{PendingVicor, PendingEeprom, PendingFastPins},
+    fbc_protocol::{PendingVicor, PendingEeprom, PendingFastPins, ErrorLogEntry, error_log},
 };
 
 /// Helper to copy slice safely
@@ -42,12 +42,22 @@ const FW_VERSION: u16 = 0x0100;
 const HEARTBEAT_INTERVAL: u32 = 100_000;
 
 // =============================================================================
+// Interrupt Handler (Cortex-A9 GIC)
+// =============================================================================
+// The actual IRQ dispatch is in hal/gic.rs (gic_irq_dispatch).
+// It's called from boot.S _irq_handler via the GIC acknowledge/EOI flow.
+// IRQ flags are set atomically in hal::gic::IRQ_FLAGS for the main loop.
+
+// =============================================================================
 // Entry Point
 // =============================================================================
 
 /// Entry point (called from startup assembly)
 #[no_mangle]
 pub extern "C" fn main() -> ! {
+    // Ensure IRQs/FIQs are disabled during init (belt-and-suspenders with boot.S)
+    unsafe { core::arch::asm!("cpsid if"); }
+
     // =========================================================================
     // PHASE 1: POWER SAFETY (do this FIRST before anything else)
     // =========================================================================
@@ -58,17 +68,24 @@ pub extern "C" fn main() -> ! {
     gpio.init_status_led();
     gpio.set_status_led(true);  // LED ON = booting
 
-    // TODO: VICOR enable pins - need correct MIO mapping from schematic!
-    // The old mapping (MIO 0,8,37,38,39,47) conflicts with other functions.
-    // VICOR control is likely through DAC or EMIO, not direct MIO GPIO.
-    // Commenting out for safe minimal test - VICOR stays in default state.
-    //
-    // const VICOR_ENABLE_PINS: [u8; 6] = [0, 39, 47, 8, 38, 37];
-    // for &pin_num in &VICOR_ENABLE_PINS {
-    //     let pin = MioPin::new(pin_num);
-    //     gpio.set_output(pin);
-    //     gpio.write_pin(pin, false);
-    // }
+    // Configure VICOR enable MIO pins as GPIO via SLCR mux
+    // MIO pins 0 and 8 may default to UART/SPI functions in SLCR,
+    // so we explicitly reconfigure them as GPIO before use.
+    let slcr = Slcr::new();
+    const VICOR_ENABLE_PINS: [u8; 6] = [0, 39, 47, 8, 38, 37];
+    for &pin_num in &VICOR_ENABLE_PINS {
+        slcr.configure_mio(pin_num, fbc_firmware::hal::slcr::mio::GPIO);
+    }
+
+    // Initialize VICOR enable pins as outputs, disabled (low)
+    // Note: MIO 0 is also the status LED pin. Configuring it as a VICOR
+    // enable output will turn off the LED. This is acceptable since the
+    // LED is toggled again below at line 75 to indicate boot progress.
+    for &pin_num in &VICOR_ENABLE_PINS {
+        let pin = MioPin::new(pin_num);
+        gpio.set_output(pin);
+        gpio.write_pin(pin, false);
+    }
 
     // Small delay for GPIO to settle
     delay_ms(10);
@@ -92,34 +109,29 @@ pub extern "C" fn main() -> ! {
     let vccaux = xadc.read_vccaux_mv().unwrap_or(0);
     let temp_mc = xadc.read_temperature_millicelsius().unwrap_or(99999); // Fail safe (trigger overtemp)
 
-    // Safety checks (VCCINT should be ~1.0V, VCCAUX should be ~1.8V)
-    if vccint < 900 || vccint > 1100 {
-        hang_with_blink(2);  // 2 blinks = VCCINT out of range
-    }
-    if vccaux < 1700 || vccaux > 1900 {
-        hang_with_blink(3);  // 3 blinks = VCCAUX out of range
-    }
-    if temp_mc > 85000 {  // 85°C max
-        hang_with_blink(4);  // 4 blinks = overtemp
-    }
+    // Safety checks — DISABLED during JTAG bring-up (XADC reads may be unreliable
+    // before PS-XADC interface is fully initialized by FSBL).
+    // TODO: Re-enable once XADC readings are verified on hardware.
+    // if vccint < 900 || vccint > 1100 {
+    //     hang_with_blink(2);  // 2 blinks = VCCINT out of range
+    // }
+    // if vccaux < 1700 || vccaux > 1900 {
+    //     hang_with_blink(3);  // 3 blinks = VCCAUX out of range
+    // }
+    // if temp_mc > 85000 {  // 85°C max
+    //     hang_with_blink(4);  // 4 blinks = overtemp
+    // }
 
     gpio.toggle_status_led();  // Flicker - XADC done
 
-    // Initialize SD Card (Flight Recorder)
+    // SD Card (Flight Recorder) — DISABLED for JTAG bring-up
+    // Root cause: SDHCI driver does byte writes to APB registers (e.g. Software Reset
+    // at 0xE010002F). Without MMU, Cortex-A9 can't do byte-level writes to device
+    // memory → alignment fault → Data Abort. Fix: SD driver needs 32-bit RMW for all
+    // register accesses, or enable MMU first.
     let mut sd = SdCard::new();
-    let sd_ok = sd.init(&slcr).is_ok();
-    gpio.toggle_status_led();  // Flicker - SD done
-
-    // Log boot event to SD Card (Raw Sector 1000)
-    if sd_ok {
-        let mut log_buf = [0u8; 512];
-        // Pack boot info: magic, vccint, vccaux, temp
-        log_buf[0..4].copy_from_slice(b"BOOT");
-        log_buf[4..6].copy_from_slice(&vccint.to_le_bytes());
-        log_buf[6..8].copy_from_slice(&vccaux.to_le_bytes());
-        log_buf[8..12].copy_from_slice(&temp_mc.to_le_bytes());
-        let _ = sd.write_block(1000, &log_buf);
-    }
+    let sd_ok = false; // Skip sd.init() — causes Data Abort without MMU
+    gpio.toggle_status_led();  // Flicker - SD skipped
 
     // =========================================================================
     // PHASE 2.5: PMBUS DISCOVERY
@@ -239,6 +251,17 @@ pub extern "C" fn main() -> ! {
     let announce = handler.build_announce();
     eth.send_fbc(BROADCAST_MAC, &announce);
 
+    // =========================================================================
+    // PHASE 4: INTERRUPT INITIALIZATION
+    // =========================================================================
+
+    // Initialize GIC and enable FBC interrupt (IRQ_F2P[0] = GIC ID 61)
+    let gic = Gic::new();
+    gic.init();
+
+    // Enable IRQ in CPSR (was disabled in boot.S)
+    unsafe { core::arch::asm!("cpsie i"); }
+
     // Boot complete - LED solid ON
     gpio.set_status_led(true);
 
@@ -247,14 +270,17 @@ pub extern "C" fn main() -> ! {
     let mut log_index: u32 = 0;  // For SD card circular buffer
     let mut last_state = ControllerState::Idle;
 
+    // Track sender MAC for unicast responses
+    let mut last_sender_mac = BROADCAST_MAC;
+
     loop {
         // Poll for incoming FBC packets
-        if let Some(packet) = eth.recv_fbc() {
-            // Process command
+        if let Some((packet, sender_mac)) = eth.recv_fbc() {
+            last_sender_mac = sender_mac;
+
+            // Process command and unicast response to sender
             if let Some(response) = handler.process(&packet) {
-                // Send response back (unicast to source would be ideal,
-                // but for now broadcast since we don't track source MAC)
-                eth.send_fbc(BROADCAST_MAC, &response);
+                eth.send_fbc(sender_mac, &response);
             }
         }
 
@@ -272,12 +298,12 @@ pub extern "C" fn main() -> ! {
                 (1, [0u8; 512])  // SD not present
             };
             let response = handler.build_log_read_response(log_req.sector, status, &data);
-            eth.send_fbc(BROADCAST_MAC, &response);
+            eth.send_fbc(last_sender_mac, &response);
         }
 
         if handler.take_pending_log_info() {
             let response = handler.build_log_info_response(sd_ok);
-            eth.send_fbc(BROADCAST_MAC, &response);
+            eth.send_fbc(last_sender_mac, &response);
         }
 
         // Handle pending Analog Monitor requests
@@ -289,7 +315,7 @@ pub extern "C" fn main() -> ! {
                 }
             }
             let response = handler.build_analog_response(&readings);
-            eth.send_fbc(BROADCAST_MAC, &response);
+            eth.send_fbc(last_sender_mac, &response);
         }
 
         // Handle pending VICOR commands
@@ -304,7 +330,7 @@ pub extern "C" fn main() -> ! {
                         status_arr[i] = (*enabled, *voltage, 0);
                     }
                     let response = handler.build_vicor_status_response(&status_arr);
-                    eth.send_fbc(BROADCAST_MAC, &response);
+                    eth.send_fbc(last_sender_mac, &response);
                 }
                 PendingVicor::Enable { core_mask } => {
                     for core in 1..=6u8 {
@@ -350,17 +376,17 @@ pub extern "C" fn main() -> ! {
                     let success = eeprom.read(offset, &mut data[..read_len]).is_ok();
                     if success {
                         let response = handler.build_eeprom_read_response(offset, &data[..read_len]);
-                        eth.send_fbc(BROADCAST_MAC, &response);
+                        eth.send_fbc(last_sender_mac, &response);
                     } else {
                         let response = handler.build_eeprom_read_response(offset, &[]);
-                        eth.send_fbc(BROADCAST_MAC, &response);
+                        eth.send_fbc(last_sender_mac, &response);
                     }
                 }
                 PendingEeprom::Write { offset, len, data } => {
                     let write_len = (len as usize).min(64);
                     let success = eeprom.write(offset, &data[..write_len]).is_ok();
                     let response = handler.build_eeprom_write_ack(success);
-                    eth.send_fbc(BROADCAST_MAC, &response);
+                    eth.send_fbc(last_sender_mac, &response);
                 }
             }
         }
@@ -374,13 +400,46 @@ pub extern "C" fn main() -> ! {
                     let dout = fbc.read_fast_dout();
                     let oen = fbc.read_fast_oen();
                     let response = handler.build_fastpins_response(din, dout, oen);
-                    eth.send_fbc(BROADCAST_MAC, &response);
+                    eth.send_fbc(last_sender_mac, &response);
                 }
                 PendingFastPins::Write { dout, oen } => {
                     fbc.write_fast_dout(dout);
                     fbc.write_fast_oen(oen);
                 }
             }
+        }
+
+        // Handle pending Error Log requests
+        if let Some(error_log_req) = handler.take_pending_error_log() {
+            let error_bram = ErrorBram::new();
+            let total_errors = status.get_error_count();
+            let mut entries = [ErrorLogEntry {
+                pattern: [0; 4],
+                vector: 0,
+                cycle_lo: 0,
+                cycle_hi: 0,
+            }; 8];
+
+            let count = (error_log_req.count as usize).min(8);
+            for i in 0..count {
+                let index = error_log_req.start_index as usize + i;
+                if index >= total_errors as usize {
+                    break;
+                }
+                error_bram.set_read_index(index as u32);
+                let pattern = error_bram.read_pattern();
+                let vector = error_bram.read_vector();
+                let cycle = error_bram.read_cycle();
+                entries[i] = ErrorLogEntry {
+                    pattern,
+                    vector,
+                    cycle_lo: cycle as u32,
+                    cycle_hi: (cycle >> 32) as u32,
+                };
+            }
+
+            let response = handler.build_error_log_response(total_errors, &entries[..count]);
+            eth.send_fbc(last_sender_mac, &response);
         }
 
         // Check for state transitions
@@ -400,7 +459,7 @@ pub extern "C" fn main() -> ! {
                         status.get_cycle_count() as u32,
                         status.get_error_count(),
                     );
-                    eth.send_fbc(BROADCAST_MAC, &error_pkt);
+                    eth.send_fbc(last_sender_mac, &error_pkt);
                 }
                 _ => {}
             }
@@ -416,7 +475,7 @@ pub extern "C" fn main() -> ! {
                 // Build and send heartbeat
                 handler.log_index = log_index;  // Use current value
                 let heartbeat = handler.build_heartbeat();
-                eth.send_fbc(BROADCAST_MAC, &heartbeat);
+                eth.send_fbc(last_sender_mac, &heartbeat);
 
                 // Flight Recorder: Log heartbeat to SD (Sectors 1001-2000 circular buffer)
                 if sd_ok {

@@ -13,6 +13,7 @@ pub const PIN_CTRL_BASE: usize    = 0x4005_0000;
 pub const STATUS_BASE: usize      = 0x4006_0000;
 pub const FREQ_COUNTER_BASE: usize = 0x4007_0000;
 pub const CLK_CTRL_BASE: usize    = 0x4008_0000;
+pub const ERROR_BRAM_BASE: usize  = 0x4009_0000;
 
 // =============================================================================
 // FBC Control Peripheral
@@ -82,6 +83,20 @@ impl FbcCtrl {
         self.read_reg(0x18)
     }
 
+    /// Enable interrupts from FBC decoder to Cortex-A9 GIC
+    /// Sets CTRL register bits 2 (irq_done) and 3 (irq_error)
+    pub fn enable_irq(&self) {
+        let ctrl = self.read_ctrl();
+        // Enable both done and error interrupts
+        self.write_ctrl(ctrl | 0x04 | 0x08);
+    }
+
+    /// Disable interrupts from FBC decoder
+    pub fn disable_irq(&self) {
+        let ctrl = self.read_ctrl();
+        self.write_ctrl(ctrl & !0x04 & !0x08);
+    }
+
     // =========================================================================
     // Fast Pins (gpio[128:159] - direct FPGA control, 1-cycle latency)
     // =========================================================================
@@ -109,6 +124,11 @@ impl FbcCtrl {
     /// Read fast pins input data register (directly from pins)
     pub fn read_fast_din(&self) -> u32 {
         self.read_reg(0x28)
+    }
+
+    /// Read fast pins error flags (which fast pins had compare errors)
+    pub fn read_fast_error(&self) -> u32 {
+        self.read_reg(0x2C)
     }
 
     // Internal helpers
@@ -493,5 +513,51 @@ impl ClkCtrl {
 
     fn write_reg(&self, offset: usize, val: u32) {
         unsafe { write_volatile((self.base + offset) as *mut u32, val) }
+    }
+}
+
+// =============================================================================
+// Error BRAM Peripheral (0x4009_0000)
+// =============================================================================
+
+/// Error BRAM read interface - captures error details from 3 BRAMs:
+/// - Pattern BRAM: 128-bit error mask (4 × 32-bit)
+/// - Vector BRAM: vector number when error occurred
+/// - Cycle BRAM: cycle count when error occurred
+pub struct ErrorBram {
+    base: usize,
+}
+
+impl ErrorBram {
+    pub const BASE: usize = ERROR_BRAM_BASE;
+
+    pub fn new() -> Self {
+        Self { base: Self::BASE }
+    }
+
+    /// Set read index for BRAM access
+    pub fn set_read_index(&self, idx: u32) {
+        unsafe { write_volatile(self.base as *mut u32, idx); }
+    }
+
+    /// Read 128-bit pattern value (4 × 32-bit words)
+    pub fn read_pattern(&self) -> [u32; 4] {
+        let mut pattern = [0u32; 4];
+        for i in 0..4 {
+            pattern[i] = unsafe { read_volatile((self.base + 0x04 + (i as usize) * 4) as *const u32) };
+        }
+        pattern
+    }
+
+    /// Read vector number when error occurred
+    pub fn read_vector(&self) -> u32 {
+        unsafe { read_volatile((self.base + 0x18) as *const u32) }
+    }
+
+    /// Read cycle count when error occurred (64-bit)
+    pub fn read_cycle(&self) -> u64 {
+        let lo = unsafe { read_volatile((self.base + 0x1C) as *const u32) };
+        let hi = unsafe { read_volatile((self.base + 0x20) as *const u32) };
+        ((hi as u64) << 32) | (lo as u64)
     }
 }

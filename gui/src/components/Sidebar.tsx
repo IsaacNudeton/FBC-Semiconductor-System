@@ -13,6 +13,8 @@ export type ViewType =
   | 'testplan'
   | 'facility'
   | 'firmware'
+  | 'fleet-terminal'
+  | 'pattern-converter'
 
 interface SidebarProps {
   activeView: ViewType
@@ -36,6 +38,8 @@ export default function Sidebar({ activeView, onViewChange }: SidebarProps) {
     { id: 'testplan', label: 'Test Plan', icon: '📋' },
     { id: 'facility', label: 'Facility', icon: '🏭' },
     { id: 'firmware', label: 'Firmware Update', icon: '🔧' },
+    { id: 'fleet-terminal', label: 'Fleet Terminal', icon: '>' },
+    { id: 'pattern-converter', label: 'Pattern Converter', icon: '~' },
   ]
 
   return (

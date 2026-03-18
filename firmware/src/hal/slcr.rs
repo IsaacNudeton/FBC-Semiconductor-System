@@ -177,28 +177,39 @@ impl Slcr {
 
     /// Configure GEM0 reference clock for Ethernet
     /// This sets GEM0_CLK_CTRL (0x140) for TX clock generation
-    /// Default: IO PLL / 8 = 125MHz for GbE
-    pub fn configure_gem0_clock(&self) {
+    /// IO PLL = 1000MHz. Dividers: 1G=8 (125MHz), 100M=40 (25MHz), 10M=400 (2.5MHz)
+    pub fn configure_gem0_clock_for_speed(&self, speed_100m: bool) {
         self.with_unlock(|s| {
             // GEM0_CLK_CTRL:
-            // Bits 25:20 = DIVISOR1 (1 = divide by 1)
-            // Bits 13:8 = DIVISOR0 (8 = divide by 8 for 125MHz from 1GHz IOPLL)
+            // Bits 25:20 = DIVISOR1
+            // Bits 13:8 = DIVISOR0
             // Bits 5:4 = SRCSEL (00 = IO PLL)
             // Bit 0 = CLKACT (1 = active)
-            let val = (1 << 20)   // DIVISOR1 = 1
-                    | (8 << 8)    // DIVISOR0 = 8 (1000MHz / 8 = 125MHz)
+            let (div0, div1) = if speed_100m {
+                (40, 1)   // 1000MHz / 40 = 25MHz for 100Mbps RGMII
+            } else {
+                (8, 1)    // 1000MHz / 8 = 125MHz for 1Gbps RGMII
+            };
+            let val = (div1 << 20)
+                    | (div0 << 8)
                     | (0 << 4)    // SRCSEL = IO PLL
                     | (1 << 0);   // CLKACT = enabled
             s.base.offset(regs::GEM0_CLK_CTRL).write(val);
         });
     }
 
-    /// Configure GEM0 RX clock (uses external clock from PHY typically)
+    /// Configure GEM0 reference clock (default 25MHz for 100M)
+    pub fn configure_gem0_clock(&self) {
+        self.configure_gem0_clock_for_speed(true);
+    }
+
+    /// Configure GEM0 RX clock source
+    /// GEM0_RCLK_CTRL at SLCR offset 0x138:
+    ///   Bit 0: CLKACT — 1 = enable RX reference clock
+    ///   Bit 4: SRCSEL — 0 = RX clock from MIO/EMIO pad (PHY provides RGMII_RXC)
     pub fn configure_gem0_rclk(&self) {
         self.with_unlock(|s| {
-            // GEM0_RCLK_CTRL at 0x138: use EMIO clock (from PHY)
-            // Bit 0 = SRCSEL: 0 = EMIO_RX_CLK, 1 = internal
-            s.base.offset(0x138).write(0); // Use EMIO (PHY provides RX clock)
+            s.base.offset(0x138).write(1); // CLKACT=1, SRCSEL=0 (PHY provides RX clock via MIO)
         });
     }
 

@@ -96,43 +96,36 @@ module clk_gen (
 
     MMCME2_ADV #(
         .BANDWIDTH            ("OPTIMIZED"),
-        .CLKFBOUT_MULT_F      (10),        // VCO = 100 * 10 = 1000 MHz
+        .CLKFBOUT_MULT_F      (6),         // VCO = 100 * 6 = 600 MHz (min for -1)
         .CLKFBOUT_PHASE       (0),
         .CLKIN1_PERIOD        (10),        // 100 MHz = 10ns
 
         // CLKOUT0: 100 MHz
-        .CLKOUT0_DIVIDE_F     (10),
-        //.CLKOUT0_DUTY_CYCLE   (0.5),
+        .CLKOUT0_DIVIDE_F     (6),
         .CLKOUT0_PHASE        (0),
 
         // CLKOUT1: 50 MHz (default)
-        .CLKOUT1_DIVIDE       (20),
-        //.CLKOUT1_DUTY_CYCLE   (0.5),
+        .CLKOUT1_DIVIDE       (12),
         .CLKOUT1_PHASE        (0),
 
         // CLKOUT2: 25 MHz
-        .CLKOUT2_DIVIDE       (40),
-        //.CLKOUT2_DUTY_CYCLE   (0.5),
+        .CLKOUT2_DIVIDE       (24),
         .CLKOUT2_PHASE        (0),
 
         // CLKOUT3: 10 MHz
-        .CLKOUT3_DIVIDE       (100),
-        //.CLKOUT3_DUTY_CYCLE   (0.5),
+        .CLKOUT3_DIVIDE       (60),
         .CLKOUT3_PHASE        (0),
 
         // CLKOUT4: 5 MHz
-        .CLKOUT4_DIVIDE       (200),
-        //.CLKOUT4_DUTY_CYCLE   (0.5),
+        .CLKOUT4_DIVIDE       (120),
         .CLKOUT4_PHASE        (0),
 
-        // CLKOUT5: 50 MHz @ 90
-        .CLKOUT5_DIVIDE       (20),
-        //.CLKOUT5_DUTY_CYCLE   (0.5),
+        // CLKOUT5: 50 MHz @ 90°
+        .CLKOUT5_DIVIDE       (12),
         .CLKOUT5_PHASE        (90),
 
-        // CLKOUT6: 50 MHz @ 180
-        .CLKOUT6_DIVIDE       (20),
-        //.CLKOUT6_DUTY_CYCLE   (0.5),
+        // CLKOUT6: 50 MHz @ 180°
+        .CLKOUT6_DIVIDE       (12),
         .CLKOUT6_PHASE        (180),
 
         .DIVCLK_DIVIDE        (1),

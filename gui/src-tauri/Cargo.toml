@@ -13,6 +13,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 winresource = "0.1"
+cc = "1.0"
 
 [dependencies]
 # Tauri
@@ -45,6 +46,34 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Serial port for switch communication
 serialport = "4.3"
+
+# ═══════════════════════════════════════════════════════════════
+# EDA MIGRATION — New dependencies for fleet controller
+# ═══════════════════════════════════════════════════════════════
+
+# SSH client (russh — pure Rust, async)
+russh = "0.42"
+russh-keys = "0.42"
+async-trait = "0.1"
+
+# SQLite database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# HTTP client (for Everest sync)
+reqwest = { version = "0.12", features = ["json"] }
+
+# UUID for Guid types
+uuid = { version = "1.8", features = ["v4", "serde"] }
+
+# EDA migration — domain models
+once_cell = "1.19"
+
+# ═══════════════════════════════════════════════════════════════
+# PIN TABLE EXTRACTION — CSV/Excel/PDF → Device Config
+# ═══════════════════════════════════════════════════════════════
+calamine = "0.26"       # Excel (.xlsx) parsing
+pdf-extract = "0.10"    # PDF text extraction
+csv = "1.3"             # CSV parsing in Rust (for preview data)
 
 [features]
 default = ["custom-protocol"]

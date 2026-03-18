@@ -12,6 +12,8 @@ use pnet_packet::ethernet::{EthernetPacket, MutableEthernetPacket};
 use pnet_packet::Packet;
 use thiserror::Error;
 
+use crate::types::ControllerState;
+
 /// FBC EtherType (custom protocol)
 pub const ETHERTYPE_FBC: u16 = 0x88B5;
 
@@ -44,6 +46,80 @@ pub mod runtime {
     pub const ERROR: u8 = 0xE0;
     pub const STATUS_REQ: u8 = 0xF0;
     pub const STATUS_RSP: u8 = 0xF1;
+}
+
+/// Error Log Commands
+pub mod error_log {
+    pub const ERROR_LOG_REQ: u8 = 0x4A;
+    pub const ERROR_LOG_RSP: u8 = 0x4B;
+}
+
+/// Flight Recorder Commands
+pub mod flight_recorder {
+    pub const LOG_READ_REQ: u8 = 0x60;
+    pub const LOG_READ_RSP: u8 = 0x61;
+    pub const LOG_INFO_REQ: u8 = 0x62;
+    pub const LOG_INFO_RSP: u8 = 0x63;
+}
+
+/// Analog Monitoring Commands
+pub mod analog {
+    pub const READ_ALL_REQ: u8 = 0x70;
+    pub const READ_ALL_RSP: u8 = 0x71;
+}
+
+/// Power Control Commands (VICOR + PMBus)
+pub mod power {
+    pub const VICOR_STATUS_REQ: u8 = 0x80;
+    pub const VICOR_STATUS_RSP: u8 = 0x81;
+    pub const VICOR_ENABLE: u8 = 0x82;
+    pub const VICOR_SET_VOLTAGE: u8 = 0x83;
+    pub const PMBUS_STATUS_REQ: u8 = 0x84;
+    pub const PMBUS_STATUS_RSP: u8 = 0x85;
+    pub const PMBUS_ENABLE: u8 = 0x86;
+    pub const EMERGENCY_STOP: u8 = 0x8F;
+    pub const POWER_SEQUENCE_ON: u8 = 0x90;
+    pub const POWER_SEQUENCE_OFF: u8 = 0x91;
+}
+
+/// EEPROM Commands
+pub mod eeprom {
+    pub const READ_REQ: u8 = 0xA0;
+    pub const READ_RSP: u8 = 0xA1;
+    pub const WRITE: u8 = 0xA2;
+    pub const WRITE_ACK: u8 = 0xA3;
+}
+
+/// Vector Engine Commands (advanced control)
+pub mod vector_engine {
+    pub const STATUS_REQ: u8 = 0xB0;
+    pub const STATUS_RSP: u8 = 0xB1;
+    pub const LOAD: u8 = 0xB2;
+    pub const LOAD_ACK: u8 = 0xB3;
+    pub const START: u8 = 0xB4;
+    pub const PAUSE: u8 = 0xB5;
+    pub const RESUME: u8 = 0xB6;
+    pub const STOP: u8 = 0xB7;
+}
+
+/// Fast Pins Commands (gpio[128:159])
+pub mod fastpins {
+    pub const READ_REQ: u8 = 0xD0;
+    pub const READ_RSP: u8 = 0xD1;
+    pub const WRITE: u8 = 0xD2;
+}
+
+/// Firmware Update Commands
+pub mod firmware {
+    pub const INFO_REQ: u8 = 0xE1;
+    pub const INFO_RSP: u8 = 0xE2;
+    pub const BEGIN: u8 = 0xE3;
+    pub const BEGIN_ACK: u8 = 0xE4;
+    pub const CHUNK: u8 = 0xE5;
+    pub const CHUNK_ACK: u8 = 0xE6;
+    pub const COMMIT: u8 = 0xE7;
+    pub const COMMIT_ACK: u8 = 0xE8;
+    pub const ABORT: u8 = 0xE9;
 }
 
 // =============================================================================
@@ -257,27 +333,6 @@ impl fmt::Display for StatusPayload {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum ControllerState {
-    Idle = 0,
-    Running = 1,
-    Done = 2,
-    Error = 3,
-}
-
-impl ControllerState {
-    pub fn from_u8(val: u8) -> Self {
-        match val {
-            0 => Self::Idle,
-            1 => Self::Running,
-            2 => Self::Done,
-            3 => Self::Error,
-            _ => Self::Idle,
-        }
-    }
-}
-
 // =============================================================================
 // FBC Packet
 // =============================================================================
@@ -391,7 +446,12 @@ impl FbcRawSocket {
         let interfaces = pnet_datalink::interfaces();
         let interface = interfaces
             .into_iter()
-            .find(|iface| iface.name == interface_name || iface.description == interface_name)
+            .find(|iface| {
+                iface.name == interface_name
+                    || iface.description == interface_name
+                    || iface.name.contains(interface_name)
+                    || iface.description.contains(interface_name)
+            })
             .ok_or_else(|| FbcError::Interface(format!("Interface '{}' not found", interface_name)))?;
 
         let our_mac = interface.mac

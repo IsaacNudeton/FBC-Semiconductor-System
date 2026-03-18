@@ -1,0 +1,335 @@
+.pc-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+}
+
+.pc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+/* Convert content */
+.pc-convert-content h3,
+.pc-dc-content h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Format / profile selector row */
+.pc-format-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.pc-format-row label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 100px;
+}
+
+.pc-format-row select {
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pc-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Result section */
+.pc-result {
+  margin-top: 16px;
+}
+
+.pc-success {
+  color: var(--success) !important;
+}
+
+/* Output files list */
+.pc-output-files {
+  margin-top: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+
+.pc-output-files h4 {
+  margin: 0 0 12px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pc-output-files ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pc-output-files li {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.pc-output-files code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-right: 8px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ * PIN IMPORT TAB
+ * ═══════════════════════════════════════════════════════════════ */
+
+.pc-import-content h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* Format badge */
+.pc-format-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.pc-format-badge.csv { background: #2d4a3e; color: #6ee7b7; }
+.pc-format-badge.xlsx { background: #1e3a5f; color: #93c5fd; }
+.pc-format-badge.pdf { background: #4a2532; color: #fca5a5; }
+
+/* Warning / verification banners */
+.pc-warning-banner {
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pc-warning-banner.warn {
+  background: #3d3520;
+  border: 1px solid #6b5b2a;
+  color: #fcd34d;
+}
+
+.pc-warning-banner.error {
+  background: #3d2020;
+  border: 1px solid #6b2a2a;
+  color: #fca5a5;
+}
+
+.pc-warning-banner.info {
+  background: #1e2d3d;
+  border: 1px solid #2a4a6b;
+  color: #93c5fd;
+}
+
+.pc-warning-banner.success {
+  background: #1e3d2d;
+  border: 1px solid #2a6b4a;
+  color: #6ee7b7;
+}
+
+/* Verification summary */
+.pc-verify-banner {
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.pc-verify-banner .verify-stats {
+  display: flex;
+  gap: 16px;
+}
+
+.pc-verify-banner .stat-match {
+  color: #6ee7b7;
+}
+
+.pc-verify-banner .stat-mismatch {
+  color: #fca5a5;
+  font-weight: 600;
+}
+
+/* Editable pin table */
+.pc-editable-table-wrap {
+  margin-top: 12px;
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 400px;
+}
+
+.pc-editable-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.pc-editable-table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 2px solid var(--bg-tertiary);
+  z-index: 1;
+}
+
+.pc-editable-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.pc-editable-table tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.pc-editable-table input {
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 6px;
+  box-sizing: border-box;
+}
+
+.pc-editable-table input:hover {
+  border-color: var(--bg-tertiary);
+}
+
+.pc-editable-table input:focus {
+  border-color: var(--accent);
+  outline: none;
+  background: var(--bg-secondary);
+}
+
+.pc-editable-table select {
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.pc-editable-table select:focus {
+  border-color: var(--accent);
+  outline: none;
+  background: var(--bg-secondary);
+}
+
+/* Mismatch highlight */
+.pc-editable-table td.mismatch {
+  background: rgba(252, 165, 165, 0.1);
+  border-left: 2px solid #fca5a5;
+}
+
+.pc-editable-table td.mismatch input {
+  color: #fca5a5;
+}
+
+/* Row actions */
+.pc-row-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.pc-row-actions button {
+  padding: 2px 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.pc-row-actions button:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.pc-row-actions button.delete:hover {
+  color: #fca5a5;
+}
+
+/* Table section headers */
+.pc-table-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  margin-bottom: 4px;
+}
+
+.pc-table-section h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pc-table-section .btn-add {
+  padding: 4px 10px;
+  font-size: 11px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.pc-table-section .btn-add:hover {
+  background: var(--accent);
+  color: var(--bg-primary);
+}

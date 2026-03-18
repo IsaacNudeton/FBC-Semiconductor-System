@@ -207,7 +207,9 @@ module io_config #(
                     end
                 end
 
-                default: wr_state <= WR_IDLE;
+                default: begin
+                    // Unknown region — ignore (FSM handles state transitions)
+                end
             endcase
         end
     end

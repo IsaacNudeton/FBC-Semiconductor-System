@@ -11,6 +11,8 @@ import VectorEnginePanel from './components/VectorEnginePanel'
 import DeviceConfigPanel from './components/DeviceConfigPanel'
 import TestPlanEditor from './components/TestPlanEditor'
 import { FirmwareUpdatePanel } from './components/FirmwareUpdatePanel'
+import FleetTerminalPanel from './components/FleetTerminalPanel'
+import PatternConverterPanel from './components/PatternConverterPanel'
 import Terminal from './components/Terminal'
 import Toolbar from './components/Toolbar'
 import { useStore } from './store'
@@ -86,6 +88,12 @@ function App() {
 
       case 'firmware':
         return <FirmwareUpdatePanel />
+
+      case 'fleet-terminal':
+        return <FleetTerminalPanel />
+
+      case 'pattern-converter':
+        return <PatternConverterPanel />
 
       default:
         return null

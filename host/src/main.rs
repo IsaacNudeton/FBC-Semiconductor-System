@@ -1,9 +1,5 @@
 //! FBC CLI - Command line interface for FBC controllers
 //!
-//! NOTE: This CLI is a placeholder. The actual implementation should use:
-//! - Raw Ethernet via FbcClient (for production boards)
-//! - Or the fbc-vec CLI for vector tools
-//!
 //! Usage:
 //!   fbc-cli --interface "Ethernet" discover
 //!   fbc-cli --interface "Ethernet" ping <mac>
@@ -56,22 +52,21 @@ fn main() -> anyhow::Result<()> {
 
         Commands::Discover { timeout } => {
             println!("Creating client on interface '{}'...", cli.interface);
-            let client = fbc_host::FbcClient::new(&cli.interface)?;
+            let mut client = fbc_host::FbcClient::new(&cli.interface)?;
 
             println!("Discovering boards ({}s timeout)...", timeout);
-
-            // Note: discover() is async, so we need a runtime
-            let rt = tokio::runtime::Runtime::new()?;
-            let boards = rt.block_on(client.discover(Duration::from_secs(timeout)))?;
+            let boards = client.discover(Duration::from_secs(timeout))?;
 
             if boards.is_empty() {
                 println!("No boards found.");
             } else {
                 println!("Found {} board(s):", boards.len());
                 for board in &boards {
-                    println!("  Board {} (MAC: {})",
-                        board.board_id,
-                        fbc_host::format_mac(&board.mac)
+                    println!("  S/N {:08X} (MAC: {}, FW: {}.{})",
+                        board.serial,
+                        fbc_host::format_mac(&board.mac),
+                        board.fw_version >> 8,
+                        board.fw_version & 0xFF,
                     );
                 }
             }
@@ -81,10 +76,8 @@ fn main() -> anyhow::Result<()> {
             let mac_bytes = fbc_host::parse_mac(&mac)
                 .ok_or_else(|| anyhow::anyhow!("Invalid MAC address: {}", mac))?;
 
-            let client = fbc_host::FbcClient::new(&cli.interface)?;
-
-            let rt = tokio::runtime::Runtime::new()?;
-            let rtt = rt.block_on(client.ping(&mac_bytes))?;
+            let mut client = fbc_host::FbcClient::new(&cli.interface)?;
+            let rtt = client.ping(&mac_bytes)?;
 
             println!("Ping {}: {:.2}ms", mac, rtt.as_secs_f64() * 1000.0);
         }

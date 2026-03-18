@@ -1,5 +1,9 @@
 # Sonoma/Everest Firmware Architecture Reference
 
+> **SUPERSEDED**: See `reference/sonoma_docs/` for more recent, verified documentation (March 2026).
+> This file is kept for the bare-metal optimization notes at the bottom. For Sonoma architecture details,
+> use `sonoma_docs/02_FIRMWARE_REFERENCE.md` and `sonoma_docs/04_VERIFIED_FROM_DEVICE_FILES.md` instead.
+
 Reference document for understanding the existing Linux-based firmware to inform bare-metal Rust optimization.
 
 ---

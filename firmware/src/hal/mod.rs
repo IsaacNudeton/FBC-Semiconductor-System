@@ -42,6 +42,7 @@ pub mod bu2505;
 pub mod max11131;
 pub mod vicor;
 pub mod sd;
+pub mod gic;
 
 // Re-export common types
 pub use slcr::Slcr;
@@ -63,6 +64,7 @@ pub use max11131::Max11131;
 pub use vicor::{VicorController, VicorError};
 pub use sd::{SdCard, SdError};
 pub use ddr::{Ddr, is_ddr_ready};
+pub use gic::{Gic, IRQ_FLAGS, IRQ_FLAG_FBC};
 
 /// Common register access trait
 pub trait Register {

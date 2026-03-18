@@ -1,5 +1,11 @@
 # FBC Semiconductor System - Register Map
 
+**Last Verified:** March 13, 2026  
+**Source:** `firmware/src/regs.rs` (verified against actual code)  
+**Status:** ✅ VERIFIED - Matches firmware/src/regs.rs exactly
+
+---
+
 ## Memory Map Overview
 
 | Peripheral    | Base Address | Size | Description                |
@@ -8,6 +14,10 @@
 | Pin Control   | 0x40050000   | 4KB  | Pin type configuration     |
 | Status        | 0x40060000   | 4KB  | Vector status & errors     |
 | Freq Counter  | 0x40070000   | 4KB  | Frequency counters (8)     |
+| Clock Ctrl    | 0x40080000   | 4KB  | Clock control (freq_sel)   |
+| Error BRAM    | 0x40090000   | 4KB  | Error logging BRAMs (×3)   |
+
+**Verified against:** `firmware/src/regs.rs` lines 11-16
 
 ---
 

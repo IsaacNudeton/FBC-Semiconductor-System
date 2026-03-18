@@ -113,6 +113,12 @@ pub mod fastpins {
     pub const WRITE:            u8 = 0xD2;  // GUI → Controller (dout, oen)
 }
 
+/// Error Log Commands (read error BRAM contents)
+pub mod error_log {
+    pub const ERROR_LOG_REQ:    u8 = 0x4A;  // GUI → Controller (start_index, count)
+    pub const ERROR_LOG_RSP:    u8 = 0x4B;  // Controller → GUI (error entries)
+}
+
 // =============================================================================
 // FBC Packet Structure
 // =============================================================================
@@ -748,6 +754,108 @@ pub enum PendingFastPins {
     Write { dout: u32, oen: u32 },
 }
 
+/// Error log entry (28 bytes)
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed)]
+pub struct ErrorLogEntry {
+    pub pattern: [u32; 4],  // 128-bit pattern value
+    pub vector: u32,        // Vector number when error occurred
+    pub cycle_lo: u32,      // Cycle count low
+    pub cycle_hi: u32,      // Cycle count high
+}
+
+impl ErrorLogEntry {
+    pub fn to_bytes(&self) -> [u8; 28] {
+        let mut buf = [0u8; 28];
+        buf[0..4].copy_from_slice(&self.pattern[0].to_be_bytes());
+        buf[4..8].copy_from_slice(&self.pattern[1].to_be_bytes());
+        buf[8..12].copy_from_slice(&self.pattern[2].to_be_bytes());
+        buf[12..16].copy_from_slice(&self.pattern[3].to_be_bytes());
+        buf[16..20].copy_from_slice(&self.vector.to_be_bytes());
+        buf[20..24].copy_from_slice(&self.cycle_lo.to_be_bytes());
+        buf[24..28].copy_from_slice(&self.cycle_hi.to_be_bytes());
+        buf
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        if data.len() < 28 {
+            return None;
+        }
+        Some(Self {
+            pattern: [
+                u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
+                u32::from_be_bytes([data[4], data[5], data[6], data[7]]),
+                u32::from_be_bytes([data[8], data[9], data[10], data[11]]),
+                u32::from_be_bytes([data[12], data[13], data[14], data[15]]),
+            ],
+            vector: u32::from_be_bytes([data[16], data[17], data[18], data[19]]),
+            cycle_lo: u32::from_be_bytes([data[20], data[21], data[22], data[23]]),
+            cycle_hi: u32::from_be_bytes([data[24], data[25], data[26], data[27]]),
+        })
+    }
+}
+
+/// Error log request payload (8 bytes)
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed)]
+pub struct ErrorLogReqPayload {
+    pub start_index: u32,
+    pub count: u32,
+}
+
+impl ErrorLogReqPayload {
+    pub fn to_bytes(&self) -> [u8; 8] {
+        [
+            (self.start_index >> 24) as u8,
+            (self.start_index >> 16) as u8,
+            (self.start_index >> 8) as u8,
+            (self.start_index) as u8,
+            (self.count >> 24) as u8,
+            (self.count >> 16) as u8,
+            (self.count >> 8) as u8,
+            (self.count) as u8,
+        ]
+    }
+
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        if data.len() < 8 {
+            return None;
+        }
+        Some(Self {
+            start_index: u32::from_be_bytes([data[0], data[1], data[2], data[3]]),
+            count: u32::from_be_bytes([data[4], data[5], data[6], data[7]]),
+        })
+    }
+}
+
+/// Error log response payload (8 + 28*N bytes)
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed)]
+pub struct ErrorLogRspPayload {
+    pub total_errors: u32,
+    pub num_entries: u32,
+    pub entries: [ErrorLogEntry; 8],  // Max 8 entries per response
+}
+
+impl ErrorLogRspPayload {
+    pub fn to_bytes(&self) -> [u8; 232] {
+        let mut buf = [0u8; 232];
+        buf[0..4].copy_from_slice(&self.total_errors.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.num_entries.to_be_bytes());
+        for (i, entry) in self.entries.iter().enumerate() {
+            buf[8 + i * 28..8 + (i + 1) * 28].copy_from_slice(&entry.to_bytes());
+        }
+        buf
+    }
+}
+
+/// Pending error log request
+#[derive(Debug, Clone, Copy)]
+pub struct PendingErrorLog {
+    pub start_index: u32,
+    pub count: u32,
+}
+
 /// FBC Protocol Handler - processes raw Ethernet FBC commands
 pub struct FbcProtocolHandler {
     state: ControllerState,
@@ -785,6 +893,7 @@ pub struct FbcProtocolHandler {
     pending_pmbus: Option<PendingPmbus>,
     pending_eeprom: Option<PendingEeprom>,
     pending_fastpins: Option<PendingFastPins>,
+    pending_error_log: Option<PendingErrorLog>,
     // Firmware update state
     fw_update_in_progress: bool,
     fw_update_total_size: u32,
@@ -847,6 +956,7 @@ impl FbcProtocolHandler {
             pending_pmbus: None,
             pending_eeprom: None,
             pending_fastpins: None,
+            pending_error_log: None,
             fw_update_in_progress: false,
             fw_update_total_size: 0,
             fw_update_expected_checksum: 0,
@@ -938,6 +1048,33 @@ impl FbcProtocolHandler {
     /// Get and clear pending fast pins command
     pub fn take_pending_fastpins(&mut self) -> Option<PendingFastPins> {
         self.pending_fastpins.take()
+    }
+
+    /// Get and clear pending error log request
+    pub fn take_pending_error_log(&mut self) -> Option<PendingErrorLog> {
+        self.pending_error_log.take()
+    }
+
+    /// Build ERROR_LOG_RSP packet (called by main.rs after reading error BRAM)
+    pub fn build_error_log_response(
+        &mut self,
+        total_errors: u32,
+        entries: &[ErrorLogEntry],
+    ) -> FbcPacket {
+        let mut payload = ErrorLogRspPayload {
+            total_errors,
+            num_entries: entries.len() as u32,
+            entries: [ErrorLogEntry {
+                pattern: [0; 4],
+                vector: 0,
+                cycle_lo: 0,
+                cycle_hi: 0,
+            }; 8],
+        };
+        for (i, entry) in entries.iter().take(8).enumerate() {
+            payload.entries[i] = *entry;
+        }
+        FbcPacket::with_payload(error_log::ERROR_LOG_RSP, self.next_seq(), &payload.to_bytes())
     }
 
     /// Build LOG_READ_RSP packet (called by main.rs after reading SD)
@@ -1069,6 +1206,9 @@ impl FbcProtocolHandler {
             // Fast pins (direct FPGA gpio[128:159])
             fastpins::READ_REQ => self.handle_fastpins_read(),
             fastpins::WRITE => self.handle_fastpins_write(payload),
+
+            // Error log (read error BRAM contents)
+            error_log::ERROR_LOG_REQ => self.handle_error_log_req(payload),
 
             // Firmware update commands
             firmware::INFO_REQ => self.handle_fw_info_req(),
@@ -1237,7 +1377,13 @@ impl FbcProtocolHandler {
             return None;  // Already running
         }
 
+        // Enable FBC decoder
         self.fbc.enable();
+
+        // Enable interrupts from FPGA (irq_done and irq_error)
+        // These are wired to Cortex-A9 GIC interrupt input
+        self.fbc.enable_irq();
+
         self.state = ControllerState::Running;
 
         Some(FbcPacket::new(runtime::START, self.next_seq()))
@@ -1449,6 +1595,19 @@ impl FbcProtocolHandler {
         let dout = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
         let oen = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
         self.pending_fastpins = Some(PendingFastPins::Write { dout, oen });
+        None
+    }
+
+    // =========================================================================
+    // Error Log Handlers
+    // =========================================================================
+
+    fn handle_error_log_req(&mut self, payload: &[u8]) -> Option<FbcPacket> {
+        let req = ErrorLogReqPayload::from_bytes(payload)?;
+        self.pending_error_log = Some(PendingErrorLog {
+            start_index: req.start_index,
+            count: req.count,
+        });
         None
     }
 

@@ -56,3 +56,11 @@ firmware/target/
 gui/src-tauri/target/
 # Large PCB files
 *.brd
+
+# Vivado temp files
+.Xil/
+vivado.jou
+vivado.log
+vivado_*.backup.jou
+vivado_*.backup.log
+*.jou

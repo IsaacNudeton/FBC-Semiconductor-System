@@ -1,6 +1,8 @@
 //! FBC System GUI - Tauri Backend
 //!
 //! Bridges the React frontend to raw Ethernet FBC protocol.
+//!
+//! EDA Migration: Adding SSH terminal, fleet management, and domain models.
 
 mod fbc;
 mod config;
@@ -8,6 +10,13 @@ mod state;
 mod export;
 mod switch;
 mod realtime;
+mod ssh;
+
+// EDA Migration — new modules
+mod models;
+mod services;
+mod database;
+mod pattern_converter;
 
 use state::AppState;
 use tauri::{Emitter, Manager};
@@ -113,7 +122,7 @@ mod commands {
         Ok(())
     }
 
-    /// Execute terminal command
+    /// Execute terminal command (legacy FBC terminal)
     #[tauri::command]
     pub async fn terminal_command(
         state: tauri::State<'_, AppState>,
@@ -121,7 +130,56 @@ mod commands {
     ) -> Result<String, String> {
         state.execute_command(&command).await.map_err(|e| e.to_string())
     }
-    /// Get fast pin state
+
+    // ═══════════════════════════════════════════════════════════════
+    // Fleet Terminal — SSH Session Commands
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Connect to a host via SSH, returns session_id for subsequent I/O
+    #[tauri::command]
+    pub async fn ssh_connect(
+        state: tauri::State<'_, AppState>,
+        app_handle: tauri::AppHandle,
+        host: String,
+        port: Option<u16>,
+        username: String,
+        password: String,
+    ) -> Result<u32, String> {
+        state
+            .ssh()
+            .connect(host, port.unwrap_or(22), username, password, app_handle)
+            .await
+    }
+
+    /// Write data to an SSH session (keystrokes from xterm.js)
+    #[tauri::command]
+    pub async fn ssh_write(
+        state: tauri::State<'_, AppState>,
+        session_id: u32,
+        data: String,
+    ) -> Result<(), String> {
+        state.ssh().write(session_id, data).await
+    }
+
+    /// Disconnect an SSH session
+    #[tauri::command]
+    pub async fn ssh_disconnect(
+        state: tauri::State<'_, AppState>,
+        session_id: u32,
+    ) -> Result<(), String> {
+        state.ssh().disconnect(session_id).await
+    }
+
+    /// List all active SSH sessions
+    #[tauri::command]
+    pub async fn ssh_list_sessions(
+        state: tauri::State<'_, AppState>,
+    ) -> Result<Vec<crate::ssh::SshSessionInfo>, String> {
+        Ok(state.ssh().list().await)
+    }
+
+    // =========================================================================
+
     #[tauri::command]
     pub async fn get_fast_pins(
         state: tauri::State<'_, AppState>,
@@ -770,9 +828,7 @@ mod commands {
     /// Get pattern statistics for a board
     ///
     /// Returns statistics about vector execution including error information.
-    /// NOTE: The error_pins list currently uses demo data. In production with
-    /// real hardware, this would read from the error_counter RTL module's BRAM
-    /// to get the actual list of pins that have errors.
+    /// Now reads actual error data from the FPGA error BRAMs via the error log protocol.
     #[tauri::command]
     pub async fn get_pattern_stats(
         state: tauri::State<'_, AppState>,
@@ -781,26 +837,35 @@ mod commands {
         // Get vector status from board
         let status = state.get_vector_status(&mac).await.map_err(|e| e.to_string())?;
 
-        // Build error pin list from error counter
-        // TODO: In production, read actual error pins from error_counter BRAM via:
-        //   - AXI register at ERROR_BRAM_BASE that contains the error mask
-        //   - Or iterate through error log entries to collect unique failing pins
+        // Build error pin list from error log entries
+        // Read first 8 error entries to collect unique failing pins
         let mut error_pins = Vec::new();
         if status.error_count > 0 {
-            // Demo data: simulate which pins have errors based on error count
-            // This provides visual feedback during development without hardware
-            error_pins.push(0);
-            error_pins.push(1);
-            if status.error_count > 5 {
-                error_pins.push(7);
-            }
-            if status.error_count > 10 {
-                error_pins.push(15);
-                error_pins.push(42);
-            }
-            if status.error_count > 50 {
-                error_pins.push(63);
-                error_pins.push(128); // Fast pin
+            match state.request_error_log(&mac, 0, 8).await {
+                Ok(log_response) => {
+                    // Collect unique pins from error masks
+                    let mut seen_pins = std::collections::HashSet::new();
+                    for entry in &log_response.entries {
+                        // Extract pin numbers from 128-bit pattern mask
+                        // Each bit represents a pin (0 = error on that pin)
+                        for (word_idx, &word) in entry.pattern.iter().enumerate() {
+                            if word != 0 {
+                                for bit_idx in 0..32 {
+                                    if word & (1 << bit_idx) != 0 {
+                                        let pin = (word_idx * 32 + bit_idx) as u8;
+                                        if seen_pins.insert(pin) {
+                                            error_pins.push(pin);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // If error log read fails, return empty error pins
+                    // This is better than returning misleading demo data
+                }
             }
         }
 
@@ -817,11 +882,7 @@ mod commands {
     /// Get error log entries
     ///
     /// Returns a list of error events captured during vector execution.
-    /// NOTE: Currently returns demo data. In production with real hardware,
-    /// this would read from the error_counter module's three BRAMs:
-    ///   - error_bram: 128-bit error mask per error event
-    ///   - vec_bram: vector number when error occurred
-    ///   - cyc_bram: cycle number when error occurred
+    /// Reads actual error data from the FPGA error BRAMs via the error log protocol.
     #[tauri::command]
     pub async fn get_pattern_errors(
         state: tauri::State<'_, AppState>,
@@ -830,58 +891,241 @@ mod commands {
     ) -> Result<Vec<ErrorInfo>, String> {
         let status = state.get_vector_status(&mac).await.map_err(|e| e.to_string())?;
 
-        let mut errors = Vec::new();
-
-        // TODO: In production, read from error BRAMs via AXI:
-        //   for i in 0..min(status.error_count, limit) {
-        //       let mask = read_axi(ERROR_BRAM_BASE + i * 16);  // 128-bit mask
-        //       let vec = read_axi(VEC_BRAM_BASE + i * 4);      // vector number
-        //       let cyc = read_axi(CYC_BRAM_BASE + i * 8);      // cycle number
-        //       errors.push(ErrorInfo { ... });
-        //   }
-
-        // Demo data: generate error entries based on error count
-        if status.error_count > 0 && status.first_fail_addr > 0 {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64;
-
-            // First error (always included if there are any errors)
-            errors.push(ErrorInfo {
-                vector: status.first_fail_addr,
-                cycle: status.first_fail_addr,
-                first_fail_pin: 0,
-                error_mask: vec![0, 1],
-                timestamp: now - 1000, // 1 second ago
-            });
-
-            // Additional demo errors for visualization
-            if status.error_count > 5 {
-                errors.push(ErrorInfo {
-                    vector: status.first_fail_addr + 10,
-                    cycle: status.first_fail_addr + 10,
-                    first_fail_pin: 7,
-                    error_mask: vec![7],
-                    timestamp: now - 500,
-                });
-            }
-
-            if status.error_count > 10 {
-                errors.push(ErrorInfo {
-                    vector: status.first_fail_addr + 25,
-                    cycle: status.first_fail_addr + 25,
-                    first_fail_pin: 15,
-                    error_mask: vec![15, 42],
-                    timestamp: now - 200,
-                });
-            }
+        if status.error_count == 0 || status.first_fail_addr == 0 {
+            return Ok(Vec::new());
         }
 
-        // Respect the limit parameter
-        errors.truncate(limit as usize);
+        // Request error log entries from the board
+        let log_response = state
+            .request_error_log(&mac, 0, limit.min(8))
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        // Convert error log entries to ErrorInfo format
+        let mut errors = Vec::new();
+        for (i, entry) in log_response.entries.iter().enumerate() {
+            // Find first failing pin from pattern mask
+            let mut first_fail_pin = 0u8;
+            let mut error_mask = Vec::new();
+            for (word_idx, &word) in entry.pattern.iter().enumerate() {
+                if word != 0 {
+                    for bit_idx in 0..32 {
+                        if word & (1 << bit_idx) != 0 {
+                            let pin = (word_idx * 32 + bit_idx) as u8;
+                            if first_fail_pin == 0 {
+                                first_fail_pin = pin;
+                            }
+                            error_mask.push(pin);
+                        }
+                    }
+                }
+            }
+
+            // Calculate cycle from cycle_lo/cycle_hi
+            let cycle = ((entry.cycle_hi as u64) << 32) | (entry.cycle_lo as u64);
+
+            errors.push(ErrorInfo {
+                vector: entry.vector,
+                cycle: cycle as u32,
+                first_fail_pin,
+                error_mask,
+                timestamp: now - ((log_response.entries.len() - i) as i64 * 100),
+            });
+        }
 
         Ok(errors)
+    }
+
+    // =========================================================================
+    // Pattern Converter Commands
+    // =========================================================================
+
+    /// Convert a pattern file (ATP/STIL/AVC) to Sonoma .hex/.seq and/or compressed .fbc
+    #[tauri::command]
+    pub async fn pc_convert(
+        input_path: String,
+        pinmap_path: Option<String>,
+        hex_output: Option<String>,
+        seq_output: Option<String>,
+        fbc_output: Option<String>,
+        format: Option<String>,
+        vec_clock_hz: Option<u32>,
+    ) -> Result<serde_json::Value, String> {
+        use crate::pattern_converter::{PatternConverter, InputFormat};
+
+        let pc = PatternConverter::new()?;
+
+        // Load pin map if provided
+        if let Some(ref map_path) = pinmap_path {
+            pc.load_pinmap(map_path)?;
+        }
+
+        // Determine input format
+        let fmt = match format.as_deref() {
+            Some("atp")  => InputFormat::Atp,
+            Some("stil") => InputFormat::Stil,
+            Some("avc")  => InputFormat::Avc,
+            _            => InputFormat::Auto,
+        };
+
+        pc.load_input(&input_path, fmt)?;
+
+        let num_signals = pc.num_signals();
+        let num_vectors = pc.num_vectors();
+
+        // Generate .hex/.seq (legacy Sonoma format)
+        pc.convert(hex_output.as_deref(), seq_output.as_deref())?;
+
+        // Generate .fbc (compressed FBC format)
+        if let Some(ref fbc_path) = fbc_output {
+            pc.gen_fbc(fbc_path, vec_clock_hz.unwrap_or(0))?;
+        }
+
+        Ok(serde_json::json!({
+            "success": true,
+            "num_signals": num_signals,
+            "num_vectors": num_vectors,
+            "hex_path": hex_output,
+            "seq_path": seq_output,
+            "fbc_path": fbc_output,
+            "version": PatternConverter::version(),
+        }))
+    }
+
+    /// Generate device config files from device JSON + tester profile
+    #[tauri::command]
+    pub async fn dc_generate_config(
+        profile: String,
+        device_path: String,
+        output_dir: String,
+    ) -> Result<serde_json::Value, String> {
+        use crate::pattern_converter::DeviceConfigGenerator;
+
+        let dc = DeviceConfigGenerator::new()?;
+        dc.load_profile(&profile)?;
+        dc.load_device(&device_path)?;
+        dc.validate()?;
+        dc.generate_all(&output_dir)?;
+
+        Ok(serde_json::json!({
+            "success": true,
+            "profile": dc.profile_name(),
+            "num_channels": dc.num_channels(),
+            "num_supplies": dc.num_supplies(),
+            "num_steps": dc.num_steps(),
+            "output_dir": output_dir,
+        }))
+    }
+
+    /// Generate a single device config file type
+    #[tauri::command]
+    pub async fn dc_generate_file(
+        profile: String,
+        device_path: String,
+        output_dir: String,
+        file_type: String,
+    ) -> Result<serde_json::Value, String> {
+        use crate::pattern_converter::{DeviceConfigGenerator, DcFileType};
+
+        let dc = DeviceConfigGenerator::new()?;
+        dc.load_profile(&profile)?;
+        dc.load_device(&device_path)?;
+        dc.validate()?;
+
+        let ft = match file_type.as_str() {
+            "pinmap"    => DcFileType::PinMap,
+            "map"       => DcFileType::Map,
+            "lvl"       => DcFileType::Lvl,
+            "tim"       => DcFileType::Tim,
+            "tp"        => DcFileType::Tp,
+            "power_on"  => DcFileType::PowerOn,
+            "power_off" => DcFileType::PowerOff,
+            _ => return Err(format!("Unknown file type: {}", file_type)),
+        };
+
+        dc.generate_file(&output_dir, ft)?;
+
+        Ok(serde_json::json!({
+            "success": true,
+            "file_type": file_type,
+            "output_dir": output_dir,
+        }))
+    }
+
+    /// Get pattern converter version info
+    #[tauri::command]
+    pub fn pc_version() -> String {
+        crate::pattern_converter::PatternConverter::version()
+    }
+
+    // =========================================================================
+    // Pin Table Extraction Commands
+    // =========================================================================
+
+    /// Extract pin table from CSV/Excel/PDF file
+    #[tauri::command]
+    pub async fn extract_pin_table(
+        file_path: String,
+    ) -> Result<serde_json::Value, String> {
+        use crate::pattern_converter::pin_extractor;
+
+        let table = pin_extractor::extract_pin_table(&file_path)?;
+        serde_json::to_value(&table).map_err(|e| format!("Serialization error: {}", e))
+    }
+
+    /// Cross-verify two pin table sources
+    #[tauri::command]
+    pub async fn verify_pin_tables(
+        primary_path: String,
+        secondary_path: String,
+    ) -> Result<serde_json::Value, String> {
+        use crate::pattern_converter::pin_extractor;
+
+        let primary = pin_extractor::extract_pin_table(&primary_path)?;
+        let secondary = pin_extractor::extract_pin_table(&secondary_path)?;
+        let result = pin_extractor::cross_verify(primary, &secondary);
+        serde_json::to_value(&result).map_err(|e| format!("Serialization error: {}", e))
+    }
+
+    /// Generate device config from extracted/edited pin table data
+    #[tauri::command]
+    pub async fn generate_from_extracted(
+        data: serde_json::Value,
+        profile: String,
+        output_dir: String,
+    ) -> Result<serde_json::Value, String> {
+        use crate::pattern_converter::{pin_extractor, DeviceConfigGenerator};
+
+        let table: pin_extractor::ExtractedPinTable =
+            serde_json::from_value(data).map_err(|e| format!("Invalid pin table data: {}", e))?;
+
+        // Write to temp device JSON
+        let temp_path = pin_extractor::write_device_json_temp(&table)?;
+
+        // Use existing C pipeline
+        let dc = DeviceConfigGenerator::new()?;
+        dc.load_profile(&profile)?;
+        dc.load_device(&temp_path)?;
+        dc.validate()?;
+        dc.generate_all(&output_dir)?;
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&temp_path);
+
+        Ok(serde_json::json!({
+            "success": true,
+            "profile": dc.profile_name(),
+            "num_channels": dc.num_channels(),
+            "num_supplies": dc.num_supplies(),
+            "num_steps": dc.num_steps(),
+            "output_dir": output_dir,
+            "device_name": table.device_name,
+        }))
     }
 
     // ==================== Switch Integration ====================
@@ -1070,6 +1314,11 @@ pub fn run() {
             commands::stop_vectors,
             // Terminal
             commands::terminal_command,
+            // Fleet Terminal — SSH Sessions
+            commands::ssh_connect,
+            commands::ssh_write,
+            commands::ssh_disconnect,
+            commands::ssh_list_sessions,
             // File I/O
             commands::read_file,
             commands::write_file,
@@ -1083,6 +1332,15 @@ pub fn run() {
             commands::get_pattern_errors,
             // Device configuration
             commands::compile_device_config,
+            // Pattern converter
+            commands::pc_convert,
+            commands::pc_version,
+            commands::dc_generate_config,
+            commands::dc_generate_file,
+            // Pin table extraction
+            commands::extract_pin_table,
+            commands::verify_pin_tables,
+            commands::generate_from_extracted,
             // Firmware update
             commands::detect_firmware_type,
             commands::update_firmware_ssh,

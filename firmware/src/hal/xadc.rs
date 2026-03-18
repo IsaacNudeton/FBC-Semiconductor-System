@@ -19,10 +19,10 @@ mod regs {
     pub const CFG: usize = 0x00;       // Configuration
     pub const INT_STS: usize = 0x04;   // Interrupt Status
     pub const INT_MASK: usize = 0x08;  // Interrupt Mask
-    pub const MSTS: usize = 0x10;      // Miscellaneous Status
-    pub const CMDFIFO: usize = 0x14;   // Command FIFO
-    pub const RDFIFO: usize = 0x18;    // Read FIFO
-    pub const MCTL: usize = 0x1C;      // Miscellaneous Control
+    pub const MSTS: usize = 0x0C;      // Miscellaneous Status
+    pub const CMDFIFO: usize = 0x10;   // Command FIFO
+    pub const RDFIFO: usize = 0x14;    // Read FIFO
+    pub const MCTL: usize = 0x18;      // Miscellaneous Control
 }
 
 /// Direct XADC registers (accessed via CMDFIFO/RDFIFO)

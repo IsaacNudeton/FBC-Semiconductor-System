@@ -1,117 +1,41 @@
-//! FBC Host Library v2 - Raw Ethernet Communication
+//! FBC Host Library v2 - Unified Semiconductor Test Control
 //!
-//! No TCP/IP. No bullshit. Just Layer 2 Ethernet frames.
-//!
-//! # New FBC Protocol
-//!
-//! The `fbc_protocol` module contains the NEW protocol that matches the firmware exactly.
-//! Use this for new development. The old protocol in this file is legacy.
-//!
-//! # Legacy Protocol (below)
-//!
-//! No TCP/IP. No bullshit. Just Layer 2 Ethernet frames.
+//! Supports both FBC (raw Ethernet) and Sonoma (SSH) board communication.
 //!
 //! # Architecture
 //!
 //! ```text
-//! ┌──────────────────┐                    ┌──────────────────┐
-//! │    GUI / CLI     │                    │   FBC Board(s)   │
-//! │                  │   Raw Ethernet     │                  │
-//! │  FbcClient ──────┼───────────────────▶│  MAC: from EEPROM│
-//! │                  │   EtherType 0x88B5 │                  │
-//! └──────────────────┘                    └──────────────────┘
-//! ```
-//!
-//! # Features
-//!
-//! - **Zero-config discovery**: Boards announce themselves, no IP setup
-//! - **Sub-100µs latency**: Raw Ethernet, no protocol overhead
-//! - **Multi-board support**: 88+ boards on one switch
-//! - **Collision avoidance**: Staggered discovery responses
-//!
-//! # Usage
-//!
-//! ```no_run
-//! use fbc_host::FbcClient;
-//!
-//! #[tokio::main]
-//! async fn main() -> anyhow::Result<()> {
-//!     // Create client on network interface
-//!     let mut client = FbcClient::new("Ethernet")?; // Windows interface name
-//!
-//!     // Discover all boards
-//!     let boards = client.discover(std::time::Duration::from_secs(1)).await?;
-//!     println!("Found {} boards", boards.len());
-//!
-//!     for board in &boards {
-//!         println!("  Board {}: MAC={}, Status={:?}",
-//!             board.board_id, board.mac, board.status);
-//!     }
-//!
-//!     // Upload and run a script on first board
-//!     if let Some(board) = boards.first() {
-//!         let script = std::fs::read("test.fbc")?;
-//!         client.upload_script(&board.mac, 0, &script).await?;
-//!         client.run_script(&board.mac, 0, 1000).await?;
-//!
-//!         // Wait for completion
-//!         let status = client.wait_done(&board.mac, std::time::Duration::from_secs(60)).await?;
-//!         println!("Completed: {} cycles, {} errors", status.cycle_count, status.error_count);
-//!     }
-//!
-//!     Ok(())
-//! }
+//! ┌──────────────────┐         ┌──────────────────┐
+//! │    GUI / CLI     │         │   FBC Board(s)   │
+//! │                  │  0x88B5 │  (bare-metal)    │
+//! │  FbcClient ──────┼────────▶│  MAC: from DNA   │
+//! │                  │         └──────────────────┘
+//! │  SonomaClient ───┼─SSH────▶┌──────────────────┐
+//! │                  │         │  Sonoma Board(s)  │
+//! └──────────────────┘         │  (Linux/Zynq)    │
+//!                              └──────────────────┘
 //! ```
 
 pub mod fbc_protocol;
+pub mod types;
 pub mod vector;
+pub mod sonoma;
+pub mod sonoma_parse;
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use pnet_datalink::{self, Channel, DataLinkReceiver, DataLinkSender, NetworkInterface, MacAddr};
-use pnet_packet::ethernet::{EtherTypes, EthernetPacket, MutableEthernetPacket};
-use pnet_packet::Packet;
-use tokio::sync::{mpsc, Mutex, RwLock};
 use byteorder::{BigEndian, ByteOrder};
 use thiserror::Error;
 
-// =============================================================================
-// Protocol Constants
-// =============================================================================
+// Re-export protocol primitives
+pub use fbc_protocol::{
+    FbcRawSocket, FbcPacket, FbcHeader, FBC_MAGIC, ETHERTYPE_FBC, BROADCAST_MAC,
+    AnnouncePayload, HeartbeatPayload, StatusPayload,
+};
 
-/// FBC EtherType (custom protocol identifier)
-pub const ETHERTYPE_FBC: u16 = 0x88B5;
-
-/// Broadcast MAC address
-pub const BROADCAST_MAC: [u8; 6] = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
-
-/// Maximum payload per frame
-pub const MAX_PAYLOAD: usize = 1494;  // 1500 - 6 (our header)
-
-// Command opcodes
-pub const CMD_DISCOVER: u8 = 0x01;
-pub const CMD_UPLOAD: u8 = 0x02;
-pub const CMD_RUN: u8 = 0x03;
-pub const CMD_STOP: u8 = 0x04;
-pub const CMD_STATUS: u8 = 0x05;
-pub const CMD_RESULTS: u8 = 0x06;
-pub const CMD_CONFIG: u8 = 0x07;
-pub const CMD_PING: u8 = 0xFE;
-
-// Response codes
-pub const RSP_OK: u8 = 0x00;
-pub const RSP_ERROR: u8 = 0x01;
-pub const RSP_BUSY: u8 = 0x02;
-pub const RSP_INVALID: u8 = 0x03;
-
-// Board status
-pub const STATUS_IDLE: u8 = 0x00;
-pub const STATUS_RUNNING: u8 = 0x01;
-pub const STATUS_DONE: u8 = 0x02;
-pub const STATUS_ERROR: u8 = 0x03;
-pub const STATUS_SYNC_WAIT: u8 = 0x04;
+// Re-export shared types
+pub use types::*;
 
 // =============================================================================
 // Error Types
@@ -143,369 +67,621 @@ pub enum FbcError {
 
 pub type Result<T> = std::result::Result<T, FbcError>;
 
-// =============================================================================
-// Board Types
-// =============================================================================
-
-/// Board information from discovery
-#[derive(Debug, Clone)]
-pub struct BoardInfo {
-    pub mac: [u8; 6],
-    pub board_id: u16,
-    pub serial: u32,
-    pub hw_rev: u16,
-    pub status: BoardStatus,
-    pub last_seen: Instant,
-}
-
-/// Board execution status
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BoardStatus {
-    Idle,
-    Running,
-    Done,
-    Error,
-    SyncWait,
-    Unknown(u8),
-}
-
-impl From<u8> for BoardStatus {
-    fn from(val: u8) -> Self {
-        match val {
-            STATUS_IDLE => BoardStatus::Idle,
-            STATUS_RUNNING => BoardStatus::Running,
-            STATUS_DONE => BoardStatus::Done,
-            STATUS_ERROR => BoardStatus::Error,
-            STATUS_SYNC_WAIT => BoardStatus::SyncWait,
-            x => BoardStatus::Unknown(x),
+impl From<fbc_protocol::FbcError> for FbcError {
+    fn from(e: fbc_protocol::FbcError) -> Self {
+        match e {
+            fbc_protocol::FbcError::Interface(s) => FbcError::Interface(s),
+            fbc_protocol::FbcError::Send(s) => FbcError::Send(s),
+            fbc_protocol::FbcError::Receive(s) => FbcError::Receive(s),
+            fbc_protocol::FbcError::Timeout => FbcError::Timeout,
+            fbc_protocol::FbcError::InvalidPacket(s) => FbcError::Board(s),
         }
     }
 }
 
-/// Detailed status from STATUS command
-#[derive(Debug, Clone)]
-pub struct StatusResponse {
-    pub status: BoardStatus,
-    pub cycle_count: u64,
-    pub vector_count: u32,
-    pub error_count: u32,
-}
-
 // =============================================================================
-// FBC Client
+// FBC Client — wraps FbcRawSocket with all 28 protocol commands
 // =============================================================================
 
-/// FBC Client for raw Ethernet communication
+/// FBC Client for raw Ethernet communication using proper 8-byte FBC headers.
 pub struct FbcClient {
-    interface: NetworkInterface,
-    our_mac: [u8; 6],
-    tx: Arc<Mutex<Box<dyn DataLinkSender>>>,
-    rx: Arc<Mutex<Box<dyn DataLinkReceiver>>>,
-    boards: Arc<RwLock<HashMap<[u8; 6], BoardInfo>>>,
-    seq: Arc<Mutex<u16>>,
+    socket: FbcRawSocket,
+    boards: HashMap<[u8; 6], BoardInfo>,
 }
 
 impl FbcClient {
     /// Create a new FBC client on the specified network interface
-    ///
-    /// # Arguments
-    /// * `interface_name` - Name of network interface (e.g., "Ethernet", "eth0")
-    ///
-    /// # Platform Notes
-    /// - **Windows**: Requires Administrator privileges for raw sockets
-    /// - **Linux**: Requires CAP_NET_RAW capability or root
     pub fn new(interface_name: &str) -> Result<Self> {
-        // Find interface
-        let interfaces = pnet_datalink::interfaces();
-        let interface = interfaces
-            .into_iter()
-            .find(|iface| iface.name == interface_name || iface.description == interface_name)
-            .ok_or_else(|| FbcError::Interface(format!("Interface '{}' not found", interface_name)))?;
-
-        let our_mac = interface.mac
-            .ok_or_else(|| FbcError::Interface("Interface has no MAC address".into()))?
-            .octets();
-
-        // Create channel
-        let (tx, rx) = match pnet_datalink::channel(&interface, Default::default()) {
-            Ok(Channel::Ethernet(tx, rx)) => (tx, rx),
-            Ok(_) => return Err(FbcError::Interface("Unexpected channel type".into())),
-            Err(e) => return Err(FbcError::Interface(format!("Failed to create channel: {}", e))),
-        };
-
+        let socket = FbcRawSocket::new(interface_name)?;
         Ok(Self {
-            interface,
-            our_mac,
-            tx: Arc::new(Mutex::new(tx)),
-            rx: Arc::new(Mutex::new(rx)),
-            boards: Arc::new(RwLock::new(HashMap::new())),
-            seq: Arc::new(Mutex::new(0)),
+            socket,
+            boards: HashMap::new(),
         })
     }
 
     /// List available network interfaces
     pub fn list_interfaces() -> Vec<String> {
-        pnet_datalink::interfaces()
-            .into_iter()
-            .filter(|iface| iface.mac.is_some())
-            .map(|iface| {
-                if iface.description.is_empty() {
-                    iface.name
-                } else {
-                    format!("{} ({})", iface.name, iface.description)
-                }
-            })
-            .collect()
+        FbcRawSocket::list_interfaces()
     }
 
-    /// Discover all FBC boards on the network
-    pub async fn discover(&self, timeout: Duration) -> Result<Vec<BoardInfo>> {
-        // Clear existing boards
-        self.boards.write().await.clear();
+    // =========================================================================
+    // Discovery
+    // =========================================================================
 
-        // Send discovery broadcast
-        self.send_frame(&BROADCAST_MAC, CMD_DISCOVER, &[]).await?;
+    /// Discover all FBC boards on the network.
+    /// Sends BIM_STATUS_REQ (0x10) broadcast, collects ANNOUNCE (0x01) responses.
+    pub fn discover(&mut self, timeout: Duration) -> Result<Vec<BoardInfo>> {
+        self.boards.clear();
 
-        // Collect responses for timeout duration
+        let seq = self.socket.next_seq();
+        let packet = FbcPacket::new(fbc_protocol::setup::BIM_STATUS_REQ, seq);
+        self.socket.send(BROADCAST_MAC, &packet)?;
+
         let start = Instant::now();
         while start.elapsed() < timeout {
-            if let Ok(Ok(Some((src_mac, cmd, _seq, payload)))) =
-                tokio::time::timeout(Duration::from_millis(50), self.recv_frame()).await
-            {
-                if cmd == CMD_DISCOVER && payload.len() >= 15 {
-                    let board = BoardInfo {
-                        board_id: BigEndian::read_u16(&payload[0..2]),
-                        serial: BigEndian::read_u32(&payload[2..6]),
-                        hw_rev: BigEndian::read_u16(&payload[6..8]),
-                        status: BoardStatus::from(payload[8]),
-                        mac: src_mac,
-                        last_seen: Instant::now(),
-                    };
-                    self.boards.write().await.insert(src_mac, board);
+            if let Some((src_mac, rsp)) = self.socket.recv_timeout(Duration::from_millis(50))? {
+                if rsp.header.cmd == fbc_protocol::setup::ANNOUNCE && rsp.payload.len() >= 16 {
+                    if let Some(announce) = AnnouncePayload::from_bytes(&rsp.payload) {
+                        let board = BoardInfo {
+                            system_type: types::SystemType::Fbc,
+                            mac: src_mac,
+                            serial: announce.serial,
+                            fw_version: announce.fw_version,
+                            hw_revision: announce.hw_revision,
+                            bim_type: announce.bim_type,
+                            has_bim: announce.has_bim,
+                            bim_programmed: announce.bim_programmed,
+                        };
+                        self.boards.insert(src_mac, board);
+                    }
                 }
             }
         }
 
-        Ok(self.boards.read().await.values().cloned().collect())
+        Ok(self.boards.values().cloned().collect())
     }
 
-    /// Upload a script to a board
-    pub async fn upload_script(&self, mac: &[u8; 6], script_id: u8, data: &[u8]) -> Result<()> {
-        // Build payload: script_id + data
-        let mut payload = Vec::with_capacity(1 + data.len());
-        payload.push(script_id);
-        payload.extend_from_slice(data);
+    // =========================================================================
+    // Status & Control
+    // =========================================================================
 
-        // May need to chunk if too large
-        if payload.len() <= MAX_PAYLOAD {
-            self.send_and_wait(mac, CMD_UPLOAD, &payload).await?;
-        } else {
-            // Chunked upload (future enhancement)
-            return Err(FbcError::Send("Script too large for single frame".into()));
-        }
+    /// Get full 47-byte status telemetry from a board
+    pub fn get_status(&mut self, mac: &[u8; 6]) -> Result<StatusResponse> {
+        let rsp = self.send_req(mac, fbc_protocol::runtime::STATUS_REQ,
+                                fbc_protocol::runtime::STATUS_RSP, &[], 500)?;
 
-        Ok(())
+        let status = StatusPayload::from_bytes(&rsp.payload)
+            .ok_or_else(|| FbcError::Board("Invalid STATUS_RSP payload".into()))?;
+
+        Ok(StatusResponse {
+            state: types::ControllerState::from_u8(status.state as u8),
+            cycles: status.cycles,
+            errors: status.errors,
+            temp_c: status.temp_c,
+            rail_voltage: status.rail_voltage,
+            rail_current: status.rail_current,
+            fpga_vccint: status.fpga_vccint,
+            fpga_vccaux: status.fpga_vccaux,
+        })
     }
 
-    /// Run a script on a board
-    pub async fn run_script(&self, mac: &[u8; 6], script_id: u8, loop_count: u32) -> Result<()> {
-        let mut payload = [0u8; 5];
-        payload[0] = script_id;
-        BigEndian::write_u32(&mut payload[1..5], loop_count);
-
-        self.send_and_wait(mac, CMD_RUN, &payload).await
-    }
-
-    /// Stop execution on a board
-    pub async fn stop(&self, mac: &[u8; 6]) -> Result<()> {
-        self.send_and_wait(mac, CMD_STOP, &[]).await
-    }
-
-    /// Get status from a board
-    pub async fn get_status(&self, mac: &[u8; 6]) -> Result<StatusResponse> {
-        self.send_frame(mac, CMD_STATUS, &[]).await?;
-
-        let timeout = Duration::from_millis(100);
+    /// Ping a board (measures round-trip time)
+    pub fn ping(&mut self, mac: &[u8; 6]) -> Result<Duration> {
         let start = Instant::now();
-
-        while start.elapsed() < timeout {
-            if let Ok(Ok(Some((src_mac, cmd, _seq, payload)))) =
-                tokio::time::timeout(Duration::from_millis(10), self.recv_frame()).await
-            {
-                if src_mac == *mac && cmd == CMD_STATUS && payload.len() >= 17 {
-                    return Ok(StatusResponse {
-                        status: BoardStatus::from(payload[0]),
-                        cycle_count: BigEndian::read_u64(&payload[1..9]),
-                        vector_count: BigEndian::read_u32(&payload[9..13]),
-                        error_count: BigEndian::read_u32(&payload[13..17]),
-                    });
-                }
-            }
-        }
-
-        Err(FbcError::Timeout)
-    }
-
-    /// Wait for execution to complete
-    pub async fn wait_done(&self, mac: &[u8; 6], timeout: Duration) -> Result<StatusResponse> {
-        let start = Instant::now();
-
-        while start.elapsed() < timeout {
-            let status = self.get_status(mac).await?;
-            match status.status {
-                BoardStatus::Done | BoardStatus::Error => return Ok(status),
-                BoardStatus::Idle => return Err(FbcError::Board("Board is idle, not running".into())),
-                _ => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
-
-        Err(FbcError::Timeout)
-    }
-
-    /// Ping a board
-    pub async fn ping(&self, mac: &[u8; 6]) -> Result<Duration> {
-        let start = Instant::now();
-        self.send_and_wait(mac, CMD_PING, &[]).await?;
+        let _ = self.get_status(mac)?;
         Ok(start.elapsed())
     }
 
-    /// Configure pin type on a board
-    pub async fn set_pin_config(&self, mac: &[u8; 6], configs: &[(u8, u8)]) -> Result<()> {
-        let mut payload = Vec::with_capacity(configs.len() * 2);
-        for (pin, pin_type) in configs {
-            payload.push(*pin);
-            payload.push(*pin_type);
-        }
-        self.send_and_wait(mac, CMD_CONFIG, &payload).await
+    /// Start test execution
+    pub fn start(&mut self, mac: &[u8; 6]) -> Result<()> {
+        self.send_cmd(mac, fbc_protocol::runtime::START, &[])
     }
 
-    // =========================================================================
-    // Internal Methods
-    // =========================================================================
-
-    async fn get_seq(&self) -> u16 {
-        let mut seq = self.seq.lock().await;
-        let val = *seq;
-        *seq = seq.wrapping_add(1);
-        val
+    /// Stop test execution
+    pub fn stop(&mut self, mac: &[u8; 6]) -> Result<()> {
+        self.send_cmd(mac, fbc_protocol::runtime::STOP, &[])
     }
 
-    async fn send_frame(&self, dst_mac: &[u8; 6], cmd: u8, payload: &[u8]) -> Result<()> {
-        let seq = self.get_seq().await;
+    /// Reset board state
+    pub fn reset(&mut self, mac: &[u8; 6]) -> Result<()> {
+        self.send_cmd(mac, fbc_protocol::runtime::RESET, &[])
+    }
 
-        // Build frame: Ethernet header (14) + our header (5) + payload
-        let frame_len = 14 + 5 + payload.len();
-        let mut buffer = vec![0u8; frame_len.max(60)];  // Minimum Ethernet frame size
+    /// Upload vectors to a board (chunked, 1400 bytes per chunk)
+    pub fn upload_vectors(&mut self, mac: &[u8; 6], data: &[u8]) -> Result<()> {
+        let chunk_size = 1400;
+        let total = data.len() as u32;
+        let mut offset = 0u32;
 
-        {
-            let mut eth = MutableEthernetPacket::new(&mut buffer)
-                .ok_or_else(|| FbcError::Send("Failed to create Ethernet packet".into()))?;
+        while (offset as usize) < data.len() {
+            let end = ((offset as usize) + chunk_size).min(data.len());
+            let chunk = &data[offset as usize..end];
 
-            eth.set_destination(MacAddr::new(
-                dst_mac[0], dst_mac[1], dst_mac[2], dst_mac[3], dst_mac[4], dst_mac[5]
-            ));
-            eth.set_source(MacAddr::new(
-                self.our_mac[0], self.our_mac[1], self.our_mac[2],
-                self.our_mac[3], self.our_mac[4], self.our_mac[5]
-            ));
-            eth.set_ethertype(pnet_packet::ethernet::EtherType(ETHERTYPE_FBC));
+            let mut payload = Vec::with_capacity(10 + chunk.len());
+            payload.extend_from_slice(&offset.to_be_bytes());
+            payload.extend_from_slice(&total.to_be_bytes());
+            payload.extend_from_slice(&(chunk.len() as u16).to_be_bytes());
+            payload.extend_from_slice(chunk);
+
+            let seq = self.socket.next_seq();
+            let packet = FbcPacket::with_payload(
+                fbc_protocol::setup::UPLOAD_VECTORS, seq, payload,
+            );
+            self.socket.send(*mac, &packet)?;
+
+            let ack = self.wait_for_cmd(mac, fbc_protocol::setup::UPLOAD_VECTORS, Duration::from_millis(500))?;
+            if ack.is_none() {
+                return Err(FbcError::Timeout);
+            }
+
+            offset += chunk.len() as u32;
         }
-
-        // Our header: cmd(1) + seq(2) + len(2) + payload
-        buffer[14] = cmd;
-        BigEndian::write_u16(&mut buffer[15..17], seq);
-        BigEndian::write_u16(&mut buffer[17..19], payload.len() as u16);
-        if !payload.is_empty() {
-            buffer[19..19 + payload.len()].copy_from_slice(payload);
-        }
-
-        // Send
-        let mut tx = self.tx.lock().await;
-        tx.send_to(&buffer, None)
-            .ok_or_else(|| FbcError::Send("Send returned None".into()))?
-            .map_err(|e| FbcError::Send(e.to_string()))?;
 
         Ok(())
     }
 
-    async fn recv_frame(&self) -> Result<Option<([u8; 6], u8, u16, Vec<u8>)>> {
-        let mut rx = self.rx.lock().await;
-
-        match rx.next() {
-            Ok(packet) => {
-                if let Some(eth) = EthernetPacket::new(packet) {
-                    // Check EtherType
-                    if eth.get_ethertype().0 != ETHERTYPE_FBC {
-                        return Ok(None);
-                    }
-
-                    let payload = eth.payload();
-                    if payload.len() < 5 {
-                        return Ok(None);
-                    }
-
-                    let src_mac: [u8; 6] = eth.get_source().octets();
-                    let cmd = payload[0];
-                    let seq = BigEndian::read_u16(&payload[1..3]);
-                    let len = BigEndian::read_u16(&payload[3..5]) as usize;
-
-                    if payload.len() >= 5 + len {
-                        let data = payload[5..5 + len].to_vec();
-                        return Ok(Some((src_mac, cmd, seq, data)));
-                    }
-                }
-                Ok(None)
-            }
-            Err(e) => Err(FbcError::Receive(e.to_string())),
+    /// Configure clock and voltages
+    pub fn configure(&mut self, mac: &[u8; 6], clock_div: u8, voltages: [u16; 6]) -> Result<()> {
+        let mut payload = vec![0u8; 18];
+        payload[0] = clock_div;
+        for i in 0..6 {
+            BigEndian::write_u16(&mut payload[1 + i * 2..3 + i * 2], voltages[i]);
         }
+        self.send_cmd(mac, fbc_protocol::setup::CONFIGURE, &payload)
     }
 
-    async fn send_and_wait(&self, mac: &[u8; 6], cmd: u8, payload: &[u8]) -> Result<()> {
-        self.send_frame(mac, cmd, payload).await?;
-
-        let timeout = Duration::from_millis(100);
+    /// Wait for execution to complete
+    pub fn wait_done(&mut self, mac: &[u8; 6], timeout: Duration) -> Result<StatusResponse> {
         let start = Instant::now();
-
         while start.elapsed() < timeout {
-            if let Ok(Ok(Some((src_mac, rsp_cmd, _seq, rsp_payload)))) =
-                tokio::time::timeout(Duration::from_millis(10), self.recv_frame()).await
-            {
-                if src_mac == *mac && rsp_cmd == cmd {
-                    // Check status if present
-                    if !rsp_payload.is_empty() && rsp_payload[0] != RSP_OK {
-                        return Err(FbcError::Board(format!("Board returned error: {}", rsp_payload[0])));
-                    }
-                    return Ok(());
-                }
+            let status = self.get_status(mac)?;
+            match status.state {
+                types::ControllerState::Done | types::ControllerState::Error => return Ok(status),
+                types::ControllerState::Idle => return Err(FbcError::Board("Board is idle".into())),
+                _ => std::thread::sleep(Duration::from_millis(100)),
             }
         }
-
         Err(FbcError::Timeout)
     }
-}
 
-// =============================================================================
-// Utility Functions
-// =============================================================================
+    // =========================================================================
+    // Fast Pins (gpio[128:159])
+    // =========================================================================
 
-/// Format MAC address as string
-pub fn format_mac(mac: &[u8; 6]) -> String {
-    format!(
-        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-    )
-}
-
-/// Parse MAC address from string
-pub fn parse_mac(s: &str) -> Option<[u8; 6]> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 6 {
-        return None;
+    /// Read fast pin state (din, dout, oen)
+    pub fn get_fast_pins(&mut self, mac: &[u8; 6]) -> Result<FastPinState> {
+        let rsp = self.send_req(mac, fbc_protocol::fastpins::READ_REQ,
+                                fbc_protocol::fastpins::READ_RSP, &[], 500)?;
+        if rsp.payload.len() < 12 {
+            return Err(FbcError::Board("FastPins response too short".into()));
+        }
+        // Firmware sends: din, dout, oen
+        Ok(FastPinState {
+            din: BigEndian::read_u32(&rsp.payload[0..4]),
+            dout: BigEndian::read_u32(&rsp.payload[4..8]),
+            oen: BigEndian::read_u32(&rsp.payload[8..12]),
+        })
     }
 
-    let mut mac = [0u8; 6];
-    for (i, part) in parts.iter().enumerate() {
-        mac[i] = u8::from_str_radix(part, 16).ok()?;
+    /// Write fast pin outputs (dout + oen)
+    pub fn set_fast_pins(&mut self, mac: &[u8; 6], dout: u32, oen: u32) -> Result<()> {
+        let mut payload = [0u8; 8];
+        BigEndian::write_u32(&mut payload[0..4], dout);
+        BigEndian::write_u32(&mut payload[4..8], oen);
+        // Fire-and-forget (no response expected)
+        let seq = self.socket.next_seq();
+        let packet = FbcPacket::with_payload(fbc_protocol::fastpins::WRITE, seq, payload.to_vec());
+        self.socket.send(*mac, &packet)?;
+        Ok(())
     }
-    Some(mac)
+
+    // =========================================================================
+    // Analog Monitoring
+    // =========================================================================
+
+    /// Read all 32 analog channels (16 XADC + 16 external MAX11131)
+    pub fn read_analog(&mut self, mac: &[u8; 6]) -> Result<AnalogChannels> {
+        let rsp = self.send_req(mac, fbc_protocol::analog::READ_ALL_REQ,
+                                fbc_protocol::analog::READ_ALL_RSP, &[], 500)?;
+        if rsp.payload.len() < 192 {
+            return Err(FbcError::Board(format!(
+                "Analog response too short: {} bytes (need 192)", rsp.payload.len()
+            )));
+        }
+
+        let mut xadc = Vec::with_capacity(16);
+        let mut external = Vec::with_capacity(16);
+
+        for i in 0..16 {
+            let offset = i * 6;
+            let raw = BigEndian::read_u16(&rsp.payload[offset..offset + 2]);
+            let scaled = BigEndian::read_i32(&rsp.payload[offset + 2..offset + 6]);
+            xadc.push(AnalogReading {
+                channel: i as u8,
+                raw,
+                voltage_mv: scaled as f32 / 1000.0,
+            });
+        }
+
+        for i in 0..16 {
+            let offset = 96 + i * 6;
+            let raw = BigEndian::read_u16(&rsp.payload[offset..offset + 2]);
+            let scaled = BigEndian::read_i32(&rsp.payload[offset + 2..offset + 6]);
+            external.push(AnalogReading {
+                channel: (16 + i) as u8,
+                raw,
+                voltage_mv: scaled as f32 / 1000.0,
+            });
+        }
+
+        Ok(AnalogChannels { xadc, external })
+    }
+
+    // =========================================================================
+    // Power Control (VICOR)
+    // =========================================================================
+
+    /// Get VICOR core power supply status (6 cores, 5 bytes each = 30 bytes)
+    pub fn get_vicor_status(&mut self, mac: &[u8; 6]) -> Result<VicorStatus> {
+        let rsp = self.send_req(mac, fbc_protocol::power::VICOR_STATUS_REQ,
+                                fbc_protocol::power::VICOR_STATUS_RSP, &[], 500)?;
+        if rsp.payload.len() < 30 {
+            return Err(FbcError::Board("VICOR response too short".into()));
+        }
+
+        let mut cores = [VicorCore { id: 0, enabled: false, voltage_mv: 0, current_ma: 0 }; 6];
+        for i in 0..6 {
+            let off = i * 5;
+            cores[i] = VicorCore {
+                id: (i + 1) as u8,
+                enabled: rsp.payload[off] != 0,
+                voltage_mv: BigEndian::read_u16(&rsp.payload[off + 1..off + 3]),
+                current_ma: BigEndian::read_u16(&rsp.payload[off + 3..off + 5]),
+            };
+        }
+
+        Ok(VicorStatus { cores })
+    }
+
+    /// Enable/disable VICOR cores (bitmask: bit 0 = core 1, etc.)
+    pub fn set_vicor_enable(&mut self, mac: &[u8; 6], core_mask: u8) -> Result<()> {
+        let seq = self.socket.next_seq();
+        let packet = FbcPacket::with_payload(fbc_protocol::power::VICOR_ENABLE, seq, vec![core_mask]);
+        self.socket.send(*mac, &packet)?;
+        Ok(())
+    }
+
+    /// Set VICOR core voltage (core 1-6, voltage in mV)
+    pub fn set_vicor_voltage(&mut self, mac: &[u8; 6], core: u8, voltage_mv: u16) -> Result<()> {
+        let mut payload = [0u8; 3];
+        payload[0] = core;
+        BigEndian::write_u16(&mut payload[1..3], voltage_mv);
+        let seq = self.socket.next_seq();
+        let packet = FbcPacket::with_payload(fbc_protocol::power::VICOR_SET_VOLTAGE, seq, payload.to_vec());
+        self.socket.send(*mac, &packet)?;
+        Ok(())
+    }
+
+    // =========================================================================
+    // Power Control (PMBus)
+    // =========================================================================
+
+    /// Get PMBus status
+    pub fn get_pmbus_status(&mut self, mac: &[u8; 6]) -> Result<PmBusStatus> {
+        let rsp = self.send_req(mac, fbc_protocol::power::PMBUS_STATUS_REQ,
+                                fbc_protocol::power::PMBUS_STATUS_RSP, &[], 500)?;
+        let mut rails = Vec::new();
+        // Parse variable-length response
+        if rsp.payload.len() >= 2 {
+            let count = rsp.payload[0] as usize;
+            let mut offset = 1;
+            for _ in 0..count {
+                if offset + 7 > rsp.payload.len() { break; }
+                rails.push(PmBusRail {
+                    address: rsp.payload[offset],
+                    enabled: rsp.payload[offset + 1] != 0,
+                    voltage_mv: BigEndian::read_u16(&rsp.payload[offset + 2..offset + 4]),
+                    current_ma: BigEndian::read_u16(&rsp.payload[offset + 4..offset + 6]),
+                });
+                offset += 7;
+            }
+        }
+        Ok(PmBusStatus { rails })
+    }
+
+    /// Enable/disable a PMBus supply
+    pub fn set_pmbus_enable(&mut self, mac: &[u8; 6], addr: u8, enable: bool) -> Result<()> {
+        let seq = self.socket.next_seq();
+        let packet = FbcPacket::with_payload(
+            fbc_protocol::power::PMBUS_ENABLE, seq, vec![addr, enable as u8],
+        );
+        self.socket.send(*mac, &packet)?;
+        Ok(())
+    }
+
+    /// Emergency stop — kill all power immediately
+    pub fn emergency_stop(&mut self, mac: &[u8; 6]) -> Result<()> {
+        self.send_cmd(mac, fbc_protocol::power::EMERGENCY_STOP, &[])
+    }
+
+    /// Power sequence on — ramp all 6 core voltages
+    pub fn power_sequence_on(&mut self, mac: &[u8; 6], voltages: [u16; 6]) -> Result<()> {
+        let mut payload = [0u8; 12];
+        for i in 0..6 {
+            BigEndian::write_u16(&mut payload[i * 2..i * 2 + 2], voltages[i]);
+        }
+        // Longer timeout for power sequencing
+        let seq = self.socket.next_seq();
+        let packet = FbcPacket::with_payload(fbc_protocol::power::POWER_SEQUENCE_ON, seq, payload.to_vec());
+        self.socket.send(*mac, &packet)?;
+        // Wait up to 5s for ACK
+        let _ = self.wait_for_cmd(mac, fbc_protocol::power::POWER_SEQUENCE_ON, Duration::from_secs(5));
+        Ok(())
+    }
+
+    /// Power sequence off — safe shutdown
+    pub fn power_sequence_off(&mut self, mac: &[u8; 6]) -> Result<()> {
+        let seq = self.socket.next_seq();
+        let packet = FbcPacket::new(fbc_protocol::power::POWER_SEQUENCE_OFF, seq);
+        self.socket.send(*mac, &packet)?;
+        let _ = self.wait_for_cmd(mac, fbc_protocol::power::POWER_SEQUENCE_OFF, Duration::from_secs(5));
+        Ok(())
+    }
+
+    // =========================================================================
+    // EEPROM
+    // =========================================================================
+
+    /// Read EEPROM data
+    pub fn read_eeprom(&mut self, mac: &[u8; 6], offset: u8, length: u8) -> Result<EepromData> {
+        let rsp = self.send_req(mac, fbc_protocol::eeprom::READ_REQ,
+                                fbc_protocol::eeprom::READ_RSP, &[offset, length], 500)?;
+        if rsp.payload.len() < 2 {
+            return Err(FbcError::Board("EEPROM response too short".into()));
+        }
+        Ok(EepromData {
+            offset: rsp.payload[0],
+            data: rsp.payload[2..].to_vec(),
+        })
+    }
+
+    /// Write EEPROM data
+    pub fn write_eeprom(&mut self, mac: &[u8; 6], offset: u8, data: &[u8]) -> Result<()> {
+        let mut payload = Vec::with_capacity(2 + data.len());
+        payload.push(offset);
+        payload.push(data.len() as u8);
+        payload.extend_from_slice(data);
+        self.send_cmd(mac, fbc_protocol::eeprom::WRITE, &payload)
+    }
+
+    // =========================================================================
+    // Vector Engine (advanced control)
+    // =========================================================================
+
+    /// Get vector engine status
+    pub fn get_vector_status(&mut self, mac: &[u8; 6]) -> Result<VectorEngineStatus> {
+        let rsp = self.send_req(mac, fbc_protocol::vector_engine::STATUS_REQ,
+                                fbc_protocol::vector_engine::STATUS_RSP, &[], 500)?;
+        if rsp.payload.len() < 33 {
+            return Err(FbcError::Board("Vector status response too short".into()));
+        }
+
+        Ok(VectorEngineStatus {
+            state: VectorState::from_u8(rsp.payload[0]),
+            current_address: BigEndian::read_u32(&rsp.payload[1..5]),
+            total_vectors: BigEndian::read_u32(&rsp.payload[5..9]),
+            loop_count: BigEndian::read_u32(&rsp.payload[9..13]),
+            target_loops: BigEndian::read_u32(&rsp.payload[13..17]),
+            error_count: BigEndian::read_u32(&rsp.payload[17..21]),
+            first_fail_addr: BigEndian::read_u32(&rsp.payload[21..25]),
+            run_time_ms: BigEndian::read_u64(&rsp.payload[25..33]),
+        })
+    }
+
+    /// Start vector engine with loop count
+    pub fn start_vectors(&mut self, mac: &[u8; 6], loops: u32) -> Result<()> {
+        self.send_cmd(mac, fbc_protocol::vector_engine::START, &loops.to_be_bytes())
+    }
+
+    /// Pause vector engine
+    pub fn pause_vectors(&mut self, mac: &[u8; 6]) -> Result<()> {
+        self.send_cmd(mac, fbc_protocol::vector_engine::PAUSE, &[])
+    }
+
+    /// Resume vector engine
+    pub fn resume_vectors(&mut self, mac: &[u8; 6]) -> Result<()> {
+        self.send_cmd(mac, fbc_protocol::vector_engine::RESUME, &[])
+    }
+
+    /// Stop vector engine
+    pub fn stop_vectors(&mut self, mac: &[u8; 6]) -> Result<()> {
+        self.send_cmd(mac, fbc_protocol::vector_engine::STOP, &[])
+    }
+
+    // =========================================================================
+    // Error Log
+    // =========================================================================
+
+    /// Read error log entries from error BRAMs
+    pub fn get_error_log(&mut self, mac: &[u8; 6], start_index: u32, count: u32) -> Result<ErrorLogResponse> {
+        let mut payload = [0u8; 8];
+        BigEndian::write_u32(&mut payload[0..4], start_index);
+        BigEndian::write_u32(&mut payload[4..8], count);
+
+        let rsp = self.send_req(mac, fbc_protocol::error_log::ERROR_LOG_REQ,
+                                fbc_protocol::error_log::ERROR_LOG_RSP, &payload, 500)?;
+        if rsp.payload.len() < 8 {
+            return Err(FbcError::Board("Error log response too short".into()));
+        }
+
+        let total_errors = BigEndian::read_u32(&rsp.payload[0..4]);
+        let num_entries = BigEndian::read_u32(&rsp.payload[4..8]);
+
+        let mut entries = Vec::new();
+        let mut offset = 8;
+        for _ in 0..num_entries {
+            if offset + 28 > rsp.payload.len() { break; }
+            entries.push(ErrorLogEntry {
+                pattern: [
+                    BigEndian::read_u32(&rsp.payload[offset..offset + 4]),
+                    BigEndian::read_u32(&rsp.payload[offset + 4..offset + 8]),
+                    BigEndian::read_u32(&rsp.payload[offset + 8..offset + 12]),
+                    BigEndian::read_u32(&rsp.payload[offset + 12..offset + 16]),
+                ],
+                vector: BigEndian::read_u32(&rsp.payload[offset + 16..offset + 20]),
+                cycle: ((BigEndian::read_u32(&rsp.payload[offset + 24..offset + 28]) as u64) << 32)
+                    | (BigEndian::read_u32(&rsp.payload[offset + 20..offset + 24]) as u64),
+            });
+            offset += 28;
+        }
+
+        Ok(ErrorLogResponse { total_errors, entries })
+    }
+
+    // =========================================================================
+    // Flight Recorder
+    // =========================================================================
+
+    /// Get flight recorder log info
+    pub fn get_log_info(&mut self, mac: &[u8; 6]) -> Result<LogInfo> {
+        let rsp = self.send_req(mac, fbc_protocol::flight_recorder::LOG_INFO_REQ,
+                                fbc_protocol::flight_recorder::LOG_INFO_RSP, &[], 500)?;
+        if rsp.payload.len() < 21 {
+            return Err(FbcError::Board("Log info response too short".into()));
+        }
+        Ok(LogInfo {
+            sd_present: rsp.payload[0] != 0,
+            boot_sector: BigEndian::read_u32(&rsp.payload[1..5]),
+            log_start: BigEndian::read_u32(&rsp.payload[5..9]),
+            log_end: BigEndian::read_u32(&rsp.payload[9..13]),
+            current_index: BigEndian::read_u32(&rsp.payload[13..17]),
+            total_entries: BigEndian::read_u32(&rsp.payload[17..21]),
+        })
+    }
+
+    /// Read a flight recorder sector
+    pub fn read_log_sector(&mut self, mac: &[u8; 6], sector: u32) -> Result<LogSector> {
+        let rsp = self.send_req(mac, fbc_protocol::flight_recorder::LOG_READ_REQ,
+                                fbc_protocol::flight_recorder::LOG_READ_RSP,
+                                &sector.to_be_bytes(), 1000)?;
+        if rsp.payload.len() < 5 {
+            return Err(FbcError::Board("Log read response too short".into()));
+        }
+        Ok(LogSector {
+            sector: BigEndian::read_u32(&rsp.payload[0..4]),
+            status: rsp.payload[4],
+            data: rsp.payload[5..].to_vec(),
+        })
+    }
+
+    // =========================================================================
+    // Firmware Update
+    // =========================================================================
+
+    /// Get firmware version info
+    pub fn get_firmware_info(&mut self, mac: &[u8; 6]) -> Result<FirmwareInfo> {
+        let rsp = self.send_req(mac, fbc_protocol::firmware::INFO_REQ,
+                                fbc_protocol::firmware::INFO_RSP, &[], 500)?;
+        if rsp.payload.len() < 20 {
+            return Err(FbcError::Board("Firmware info response too short".into()));
+        }
+        Ok(FirmwareInfo {
+            version_major: rsp.payload[0],
+            version_minor: rsp.payload[1],
+            version_patch: rsp.payload[2],
+            build_date: String::from_utf8_lossy(&rsp.payload[3..13]).trim_end_matches('\0').to_string(),
+            serial: BigEndian::read_u32(&rsp.payload[13..17]),
+            hw_revision: rsp.payload[17],
+            bootloader_version: rsp.payload[18],
+            update_in_progress: (rsp.payload[19] & 0x01) != 0,
+            sd_present: (rsp.payload[19] & 0x02) != 0,
+        })
+    }
+
+    /// Full firmware update: begin → chunks → commit
+    pub fn firmware_update(&mut self, mac: &[u8; 6], data: &[u8], checksum: u32) -> Result<FwCommitAck> {
+        // BEGIN
+        let mut begin_payload = [0u8; 8];
+        BigEndian::write_u32(&mut begin_payload[0..4], data.len() as u32);
+        BigEndian::write_u32(&mut begin_payload[4..8], checksum);
+
+        let begin_rsp = self.send_req(mac, fbc_protocol::firmware::BEGIN,
+                                      fbc_protocol::firmware::BEGIN_ACK, &begin_payload, 2000)?;
+        if begin_rsp.payload.len() < 3 || begin_rsp.payload[0] != 0 {
+            return Err(FbcError::Board(format!(
+                "Firmware begin failed: status={}", begin_rsp.payload.get(0).unwrap_or(&0xFF)
+            )));
+        }
+        let max_chunk = BigEndian::read_u16(&begin_rsp.payload[1..3]) as usize;
+        let chunk_size = max_chunk.min(1024);
+
+        // CHUNKS
+        let mut offset = 0u32;
+        while (offset as usize) < data.len() {
+            let end = ((offset as usize) + chunk_size).min(data.len());
+            let chunk = &data[offset as usize..end];
+
+            let mut payload = Vec::with_capacity(6 + chunk.len());
+            payload.extend_from_slice(&offset.to_be_bytes());
+            payload.extend_from_slice(&(chunk.len() as u16).to_be_bytes());
+            payload.extend_from_slice(chunk);
+
+            let chunk_rsp = self.send_req(mac, fbc_protocol::firmware::CHUNK,
+                                          fbc_protocol::firmware::CHUNK_ACK, &payload, 2000)?;
+            if chunk_rsp.payload.len() >= 5 && chunk_rsp.payload[4] != 0 {
+                return Err(FbcError::Board(format!(
+                    "Firmware chunk failed at offset {}: status={}", offset, chunk_rsp.payload[4]
+                )));
+            }
+
+            offset += chunk.len() as u32;
+        }
+
+        // COMMIT
+        let commit_rsp = self.send_req(mac, fbc_protocol::firmware::COMMIT,
+                                       fbc_protocol::firmware::COMMIT_ACK, &[], 10000)?;
+        if commit_rsp.payload.len() < 9 {
+            return Err(FbcError::Board("Firmware commit response too short".into()));
+        }
+
+        Ok(FwCommitAck {
+            status: commit_rsp.payload[0],
+            received_size: BigEndian::read_u32(&commit_rsp.payload[1..5]),
+            computed_checksum: BigEndian::read_u32(&commit_rsp.payload[5..9]),
+        })
+    }
+
+    // =========================================================================
+    // Internal helpers
+    // =========================================================================
+
+    /// Send a request and wait for a specific response command
+    fn send_req(&mut self, mac: &[u8; 6], send_cmd: u8, recv_cmd: u8,
+                payload: &[u8], timeout_ms: u64) -> Result<FbcPacket> {
+        let seq = self.socket.next_seq();
+        let packet = FbcPacket::with_payload(send_cmd, seq, payload.to_vec());
+        self.socket.send(*mac, &packet)?;
+
+        self.wait_for_cmd(mac, recv_cmd, Duration::from_millis(timeout_ms))?
+            .ok_or(FbcError::Timeout)
+    }
+
+    /// Send a command and wait for same-cmd ACK
+    fn send_cmd(&mut self, mac: &[u8; 6], cmd: u8, payload: &[u8]) -> Result<()> {
+        let _ = self.socket.send_and_wait(*mac, cmd, payload.to_vec(), Duration::from_millis(500))?;
+        Ok(())
+    }
+
+    /// Wait for a specific command response from a specific MAC
+    fn wait_for_cmd(&mut self, mac: &[u8; 6], cmd: u8, timeout: Duration) -> Result<Option<FbcPacket>> {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if let Some((src_mac, rsp)) = self.socket.recv_timeout(Duration::from_millis(10))? {
+                if src_mac == *mac && rsp.header.cmd == cmd {
+                    return Ok(Some(rsp));
+                }
+            }
+        }
+        Ok(None)
+    }
 }

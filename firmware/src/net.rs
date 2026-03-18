@@ -260,6 +260,13 @@ impl GemEth {
             }
         }
         self.rx_index = 0;
+        
+        // Memory barrier to ensure DMA sees descriptor updates
+        // Cortex-A9 L1 cache is coherent with DMA for OCM region (0xFFFDxxxx)
+        // but we need to ensure writes complete before enabling RX
+        unsafe {
+            core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
+        }
     }
 
     /// Initialize TX buffer descriptors
@@ -277,6 +284,11 @@ impl GemEth {
             }
         }
         self.tx_index = 0;
+        
+        // Memory barrier to ensure DMA sees descriptor updates
+        unsafe {
+            core::arch::asm!("dsb sy", "isb", options(nostack, preserves_flags));
+        }
     }
 
     /// Receive a packet
@@ -447,10 +459,11 @@ impl GemEth {
         // This is CRITICAL for proper timing on RGMII interface
         self.configure_phy_rgmii_delays(phy_addr);
 
-        // Enable auto-negotiation for 10/100/1000
-        // Advertise all speeds and full duplex
+        // Enable auto-negotiation for 10/100 only
+        // DO NOT advertise 1000M — MAC is configured for 100M and SLCR clocks
+        // aren't set for 125MHz RGMII. Speed mismatch = no communication.
         self.phy_write(phy_addr, PHY_ANAR, 0x01E1); // 10/100 FD + HD + 802.3
-        self.phy_write(phy_addr, PHY_GBCR, 0x0300); // 1000 FD + HD
+        self.phy_write(phy_addr, PHY_GBCR, 0x0000); // Disable 1000M advertisement
 
         // Start auto-negotiation
         self.phy_write(phy_addr, PHY_BMCR, BMCR_AN_ENABLE | BMCR_RESTART_AN);
@@ -843,8 +856,9 @@ impl GemEth {
 
     /// Receive FBC packet (non-blocking)
     ///
-    /// Returns Some(packet) if FBC frame received, None if no frame or wrong EtherType
-    pub fn recv_fbc(&mut self) -> Option<FbcPacket> {
+    /// Returns Some((packet, sender_mac)) if FBC frame received.
+    /// The sender_mac can be used to unicast responses back.
+    pub fn recv_fbc(&mut self) -> Option<(FbcPacket, [u8; 6])> {
         let mut frame = [0u8; 1536];
 
         // Try to receive frame
@@ -864,8 +878,11 @@ impl GemEth {
             return None;  // Not an FBC packet
         }
 
+        // Extract sender MAC (bytes 6-11 of Ethernet frame)
+        let sender_mac = [frame[6], frame[7], frame[8], frame[9], frame[10], frame[11]];
+
         // Parse FBC packet (skip Ethernet header)
-        FbcPacket::parse(&frame[14..len])
+        FbcPacket::parse(&frame[14..len]).map(|pkt| (pkt, sender_mac))
     }
 }
 

@@ -10,6 +10,7 @@ use crate::fbc::{
     VicorCoreStatus, VicorStatus, BROADCAST_MAC,
 };
 use crate::realtime::{BoardEvent, HeartbeatPacket, LiveBoardState, RealtimeMonitor};
+use crate::ssh::SshSessionManager;
 use crate::switch::SwitchConfig;
 use byteorder::{BigEndian, ByteOrder};
 use std::collections::HashMap;
@@ -39,6 +40,8 @@ pub struct AppState {
     realtime: Arc<RealtimeMonitor>,
     /// Switch configuration for position discovery
     switch_config: Arc<RwLock<SwitchConfig>>,
+    /// SSH session manager for fleet terminal
+    ssh: Arc<SshSessionManager>,
 }
 
 impl AppState {
@@ -49,6 +52,7 @@ impl AppState {
             config: Arc::new(RwLock::new(RackConfig::default())),
             realtime: Arc::new(RealtimeMonitor::new()),
             switch_config: Arc::new(RwLock::new(SwitchConfig::default())),
+            ssh: Arc::new(SshSessionManager::new()),
         }
     }
 
@@ -83,6 +87,11 @@ impl AppState {
         self.switch_config.read().await.clone()
     }
 
+    /// Get SSH session manager
+    pub fn ssh(&self) -> &Arc<SshSessionManager> {
+        &self.ssh
+    }
+
     /// Connect to FBC network
     pub async fn connect(&self, interface: &str) -> fbc::Result<()> {
         let socket = FbcSocket::new(interface)?;
@@ -91,7 +100,46 @@ impl AppState {
         // Start heartbeat listener
         self.start_heartbeat_listener(interface).await;
 
+        // Verify connection by sending a discovery broadcast
+        // This ensures the socket actually works (not just opened)
+        if let Err(e) = self.verify_connection().await {
+            tracing::warn!("Connection verification failed: {}", e);
+            // Don't fail connect, just warn - user can still try to use it
+        }
+
         Ok(())
+    }
+
+    /// Verify connection works by sending discovery and checking for response
+    async fn verify_connection(&self) -> fbc::Result<()> {
+        let socket_guard = self.socket.read().await;
+        let socket = socket_guard.as_ref().ok_or(fbc::FbcError::NotConnected)?;
+
+        // Send discovery broadcast
+        socket
+            .send(BROADCAST_MAC, fbc::setup::BIM_STATUS_REQ, &[])
+            .await?;
+
+        let our_mac_str = fbc::format_mac(&socket.our_mac());
+        tracing::info!("Sent discovery broadcast on {}", our_mac_str);
+
+        // Wait up to 500ms for any response
+        let timeout = std::time::Duration::from_millis(500);
+        let start = std::time::Instant::now();
+
+        while start.elapsed() < timeout {
+            if let Some((src_mac, cmd, _payload)) =
+                socket.recv_timeout(std::time::Duration::from_millis(50)).await?
+            {
+                // Got a response! Connection verified
+                let src_mac_str = fbc::format_mac(&src_mac);
+                tracing::info!("Connection verified - received {} from {}", cmd, src_mac_str);
+                return Ok(());
+            }
+        }
+
+        // No response - connection may not work
+        Err(fbc::FbcError::Timeout)
     }
 
     /// Start background listener for heartbeat packets
@@ -189,7 +237,10 @@ impl AppState {
             {
                 if cmd == fbc::setup::ANNOUNCE && payload.len() >= 16 {
                     let info = parse_announce(&src_mac, &payload);
-                    discovered.push(info);
+                    // Deduplicate by MAC — board may send multiple ANNOUNCEs
+                    if !discovered.iter().any(|b: &BoardInfo| b.mac == info.mac) {
+                        discovered.push(info);
+                    }
                 }
             }
         }
@@ -414,7 +465,7 @@ impl AppState {
             if let Some((src_mac, cmd, payload)) =
                 socket.recv_timeout(Duration::from_millis(50)).await?
             {
-                if src_mac == mac_bytes && cmd == fbc::power::VICOR_STATUS_RSP && payload.len() >= 48 {
+                if src_mac == mac_bytes && cmd == fbc::power::VICOR_STATUS_RSP && payload.len() >= 30 {
                     return Ok(parse_vicor_status(&payload));
                 }
             }
@@ -644,6 +695,45 @@ impl AppState {
         Err(fbc::FbcError::Timeout)
     }
 
+    // =========================================================================
+    // Error Log
+    // =========================================================================
+
+    /// Request error log entries from a board
+    pub async fn request_error_log(
+        &self,
+        mac: &str,
+        start_index: u32,
+        count: u32,
+    ) -> fbc::Result<fbc::ErrorLogResponse> {
+        let mac_bytes = fbc::parse_mac(mac).ok_or_else(|| fbc::FbcError::InvalidMac(mac.to_string()))?;
+
+        let socket_guard = self.socket.read().await;
+        let socket = socket_guard.as_ref().ok_or(fbc::FbcError::NotConnected)?;
+
+        // Build request payload: start_index (4 bytes) + count (4 bytes)
+        let mut payload = Vec::with_capacity(8);
+        payload.extend_from_slice(&start_index.to_be_bytes());
+        payload.extend_from_slice(&count.to_be_bytes());
+
+        socket.send(mac_bytes, fbc::error_log::ERROR_LOG_REQ, &payload).await?;
+
+        let timeout = Duration::from_millis(1000);
+        let start = std::time::Instant::now();
+
+        while start.elapsed() < timeout {
+            if let Some((src_mac, cmd, payload)) =
+                socket.recv_timeout(Duration::from_millis(50)).await?
+            {
+                if src_mac == mac_bytes && cmd == fbc::error_log::ERROR_LOG_RSP && payload.len() >= 8 {
+                    return Ok(parse_error_log_response(&payload));
+                }
+            }
+        }
+
+        Err(fbc::FbcError::Timeout)
+    }
+
     /// Load vectors from file data
     pub async fn load_vectors(&self, mac: &str, data: &[u8]) -> fbc::Result<()> {
         let mac_bytes = fbc::parse_mac(mac).ok_or_else(|| fbc::FbcError::InvalidMac(mac.to_string()))?;
@@ -792,6 +882,8 @@ impl AppState {
             "cycles": status.cycles,
             "errors": status.errors,
             "temp_c": status.temp_c,
+            "rail_voltage_mv": status.rail_voltage_mv,
+            "rail_current_ma": status.rail_current_ma,
             "fpga_vccint_mv": status.fpga_vccint_mv,
             "fpga_vccaux_mv": status.fpga_vccaux_mv,
             "fpga_vccbram_mv": 0, // Would need additional protocol support
@@ -829,6 +921,21 @@ impl AppState {
         });
 
         Ok(info)
+    }
+
+    /// Resolve MAC: use explicit arg, or auto-select if only one board discovered
+    async fn resolve_mac<'a>(&self, parts: &'a [&'a str], arg_index: usize) -> fbc::Result<String> {
+        if parts.len() > arg_index {
+            return Ok(parts[arg_index].to_string());
+        }
+        let boards = self.boards.read().await;
+        if boards.len() == 1 {
+            Ok(boards.keys().next().unwrap().clone())
+        } else if boards.is_empty() {
+            Err(fbc::FbcError::SendFailed("No boards discovered. Run 'discover' first.".into()))
+        } else {
+            Err(fbc::FbcError::SendFailed(format!("Multiple boards found. Specify MAC: {} <mac>", parts[0])))
+        }
     }
 
     /// Execute a terminal command
@@ -873,10 +980,12 @@ impl AppState {
                 Ok(format!("Discovered {} board(s)", boards.len()))
             }
 
-            "status" if parts.len() >= 2 => {
-                let status = self.get_status(parts[1]).await?;
+            "status" => {
+                let mac = self.resolve_mac(&parts, 1).await?;
+                let status = self.get_status(&mac).await?;
                 Ok(format!(
-                    "State: {:?}\nCycles: {}\nErrors: {}\nTemp: {:.1}°C\nVCCINT: {} mV\nVCCAUX: {} mV",
+                    "Board: {}\nState: {:?}\nCycles: {}\nErrors: {}\nTemp: {:.1}°C\nVCCINT: {} mV\nVCCAUX: {} mV",
+                    mac,
                     status.state,
                     status.cycles,
                     status.errors,
@@ -886,51 +995,56 @@ impl AppState {
                 ))
             }
 
-            "start" if parts.len() >= 2 => {
-                self.start(parts[1]).await?;
-                Ok(format!("Started {}", parts[1]))
+            "start" => {
+                let mac = self.resolve_mac(&parts, 1).await?;
+                self.start(&mac).await?;
+                Ok(format!("Started {}", mac))
             }
 
-            "stop" if parts.len() >= 2 => {
-                self.stop(parts[1]).await?;
-                Ok(format!("Stopped {}", parts[1]))
+            "stop" => {
+                let mac = self.resolve_mac(&parts, 1).await?;
+                self.stop(&mac).await?;
+                Ok(format!("Stopped {}", mac))
             }
 
-            "reset" if parts.len() >= 2 => {
-                self.reset(parts[1]).await?;
-                Ok(format!("Reset {}", parts[1]))
+            "reset" => {
+                let mac = self.resolve_mac(&parts, 1).await?;
+                self.reset(&mac).await?;
+                Ok(format!("Reset {}", mac))
             }
 
-            "fastpins" if parts.len() >= 2 => {
-                 let mac = parts[1];
-                 if parts.len() == 2 {
+            "fastpins" => {
+                 let mac_result = self.resolve_mac(&parts, 1).await;
+                 // If arg 1 looks like a MAC, use it; otherwise auto-resolve
+                 let (mac, cmd_offset) = if parts.len() >= 2 && parts[1].contains(':') {
+                     (parts[1].to_string(), 2)
+                 } else if let Ok(m) = mac_result {
+                     (m, 1)
+                 } else {
+                     return Ok("No board selected. Usage: fastpins [mac] [set <dout> <oen>]".into());
+                 };
+                 let mac = mac.as_str();
+                 let rest = &parts[cmd_offset..];
+                 if rest.is_empty() {
                      // Get status
                      let state = self.get_fast_pins(mac).await?;
                      Ok(format!(
                          "Fast Pins (Bank 35):\n  DOUT: 0x{:08X}\n  OEN:  0x{:08X}\n  DIN:  0x{:08X}",
                          state.dout, state.oen, state.din
                      ))
-                 } else if parts.len() >= 4 {
-                     // Set values
-                     let cmd = parts[2]; // "dout" or "oen" (we need both really, or partial set)
-                     // To simplify terminal usage, let's implement: fastpins <mac> set <dout_hex> <oen_hex>
-                     if cmd == "set" && parts.len() >= 5 {
-                         let dout = match u32::from_str_radix(parts[3].trim_start_matches("0x"), 16) {
-                             Ok(v) => v,
-                             Err(_) => return Ok("Error: Invalid DOUT hex value".to_string()),
-                         };
-                         let oen = match u32::from_str_radix(parts[4].trim_start_matches("0x"), 16) {
-                             Ok(v) => v,
-                             Err(_) => return Ok("Error: Invalid OEN hex value".to_string()),
-                         };
-
-                         self.set_fast_pins(mac, dout, oen).await?;
-                         Ok(format!("Set fast pins for {}", mac))
-                     } else {
-                         Ok("Usage: fastpins <mac> [set <dout_hex> <oen_hex>]".to_string())
-                     }
+                 } else if rest.len() >= 3 && rest[0] == "set" {
+                     let dout = match u32::from_str_radix(rest[1].trim_start_matches("0x"), 16) {
+                         Ok(v) => v,
+                         Err(_) => return Ok("Error: Invalid DOUT hex value".to_string()),
+                     };
+                     let oen = match u32::from_str_radix(rest[2].trim_start_matches("0x"), 16) {
+                         Ok(v) => v,
+                         Err(_) => return Ok("Error: Invalid OEN hex value".to_string()),
+                     };
+                     self.set_fast_pins(mac, dout, oen).await?;
+                     Ok(format!("Set fast pins for {}", mac))
                  } else {
-                     Ok("Usage: fastpins <mac> [set <dout_hex> <oen_hex>]".to_string())
+                     Ok("Usage: fastpins [mac] [set <dout_hex> <oen_hex>]".to_string())
                  }
             }
 
@@ -1168,11 +1282,35 @@ fn parse_announce(mac: &[u8; 6], payload: &[u8]) -> BoardInfo {
 
 fn parse_status(payload: &[u8]) -> BoardStatus {
     let temp_raw = i16::from_be_bytes([payload[8], payload[9]]);
+
+    // Firmware StatusPayload (47 bytes):
+    //   [0..4]   cycles(u32)
+    //   [4..8]   errors(u32)
+    //   [8..10]  temp_c(i16)
+    //   [10]     state(u8)
+    //   [11..27] rail_voltage[8](u16) — 16 bytes
+    //   [27..43] rail_current[8](u16) — 16 bytes
+    //   [43..45] fpga_vccint(u16)
+    //   [45..47] fpga_vccaux(u16)
+    let mut rail_voltage_mv = [0u16; 8];
+    let mut rail_current_ma = [0u16; 8];
+
+    if payload.len() >= 47 {
+        for i in 0..8 {
+            rail_voltage_mv[i] = u16::from_be_bytes([payload[11 + i * 2], payload[12 + i * 2]]);
+        }
+        for i in 0..8 {
+            rail_current_ma[i] = u16::from_be_bytes([payload[27 + i * 2], payload[28 + i * 2]]);
+        }
+    }
+
     BoardStatus {
         cycles: u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]),
         errors: u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]),
         temp_c: (temp_raw as f32) / 10.0,
         state: ControllerState::from(payload[10]),
+        rail_voltage_mv,
+        rail_current_ma,
         fpga_vccint_mv: if payload.len() >= 45 {
             u16::from_be_bytes([payload[43], payload[44]])
         } else {
@@ -1187,10 +1325,11 @@ fn parse_status(payload: &[u8]) -> BoardStatus {
 }
 
 fn parse_fast_pins(payload: &[u8]) -> FastPinState {
+    // Firmware sends: din(4) + dout(4) + oen(4) — match that order
     FastPinState {
-        dout: u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]),
-        oen: u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]),
-        din: u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]),
+        din: u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]),
+        dout: u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]),
+        oen: u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]),
     }
 }
 
@@ -1251,16 +1390,17 @@ fn ext_adc_to_voltage(raw: u16) -> f32 {
 fn parse_vicor_status(payload: &[u8]) -> VicorStatus {
     let mut cores = [VicorCore::default(); 6];
 
-    // Each core: 8 bytes (id, enabled, voltage_mv[2], current_ma[2], temp[2])
+    // Firmware sends 5 bytes per core: enabled(1) + voltage_mv(2) + current_ma(2)
     for i in 0..6 {
-        let offset = i * 8;
+        let offset = i * 5;
+        let enabled = payload[offset] != 0;
         cores[i] = VicorCore {
-            id: payload[offset],
-            enabled: payload[offset + 1] != 0,
-            voltage_mv: BigEndian::read_u16(&payload[offset + 2..offset + 4]),
-            current_ma: BigEndian::read_u16(&payload[offset + 4..offset + 6]),
-            temp_c: BigEndian::read_i16(&payload[offset + 6..offset + 8]) as f32 / 10.0,
-            status: VicorCoreStatus::from(payload[offset + 1]),
+            id: i as u8,
+            enabled,
+            voltage_mv: BigEndian::read_u16(&payload[offset + 1..offset + 3]),
+            current_ma: BigEndian::read_u16(&payload[offset + 3..offset + 5]),
+            temp_c: 0.0, // Not sent in this payload
+            status: if enabled { VicorCoreStatus::On } else { VicorCoreStatus::Off },
         };
     }
 
@@ -1368,6 +1508,51 @@ fn parse_vector_status(payload: &[u8]) -> VectorEngineStatus {
         error_count: BigEndian::read_u32(&payload[17..21]),
         first_fail_addr: BigEndian::read_u32(&payload[21..25]),
         run_time_ms: BigEndian::read_u64(&payload[25..33]),
+    }
+}
+
+fn parse_error_log_response(payload: &[u8]) -> fbc::ErrorLogResponse {
+    if payload.len() < 8 {
+        return fbc::ErrorLogResponse {
+            total_errors: 0,
+            num_entries: 0,
+            entries: vec![],
+        };
+    }
+
+    let total_errors = BigEndian::read_u32(&payload[0..4]);
+    let num_entries = BigEndian::read_u32(&payload[4..8]);
+
+    let mut entries = Vec::new();
+    let max_entries = ((payload.len() - 8) / 28).min(num_entries as usize);
+
+    for i in 0..max_entries {
+        let offset = 8 + i * 28;
+        if offset + 28 > payload.len() {
+            break;
+        }
+        let pattern = [
+            BigEndian::read_u32(&payload[offset..offset+4]),
+            BigEndian::read_u32(&payload[offset+4..offset+8]),
+            BigEndian::read_u32(&payload[offset+8..offset+12]),
+            BigEndian::read_u32(&payload[offset+12..offset+16]),
+        ];
+        let vector = BigEndian::read_u32(&payload[offset+16..offset+20]);
+        let cycle_lo = BigEndian::read_u32(&payload[offset+20..offset+24]);
+        let cycle_hi = BigEndian::read_u32(&payload[offset+24..offset+28]);
+
+        entries.push(fbc::ErrorLogEntry {
+            pattern,
+            vector,
+            cycle_lo,
+            cycle_hi,
+        });
+    }
+
+    fbc::ErrorLogResponse {
+        total_errors,
+        num_entries,
+        entries,
     }
 }
 

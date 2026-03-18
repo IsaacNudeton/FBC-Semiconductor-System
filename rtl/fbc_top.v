@@ -472,7 +472,8 @@ module fbc_top #(
         // Fast pin control (Bank 35)
         .fast_dout(ctrl_fast_dout),
         .fast_oen(ctrl_fast_oen),
-        .fast_din(fast_din)
+        .fast_din(fast_din),
+        .fast_error(io_fast_error)
     );
 
     //=========================================================================
@@ -515,8 +516,6 @@ module fbc_top #(
         .has_errors(first_error_detected)
     );
 
-    // Export fast errors
-    assign fast_error = io_fast_error;
     // Fast pin input states for AXI readback
     assign fast_din = pin_din[159:128];
 

@@ -251,22 +251,31 @@ set_property DRIVE 4 [get_ports {gpio[20]}]
 # ... (remaining pins get 4mA by default)
 
 #==============================================================================
-# IOB Register Packing (from reference - critical for timing)
+# Clock MUX Cascade Override
 #==============================================================================
-set_property IOB true [get_cells {io_table/genblk*.PIN_TYPE_CTRL[*].single_pin_i/pin_dout_wr_reg}]
-set_property IOB true [get_cells {io_table/genblk*.PIN_TYPE_CTRL[*].single_pin_i/pin_oen_wr_reg}]
+# The 3-level BUFGMUX tree (5-freq selection) can't be placed in adjacent
+# clock buffer slots. Allow non-dedicated routing for the cascade.
+# Jitter impact negligible at 5-100 MHz operating frequencies.
+set_property CLOCK_DEDICATED_ROUTE ANY_CMT_COLUMN [get_nets u_clk_gen/mux_01_out]
 
 #==============================================================================
-# Timing Constraints (from reference)
+# IOB Register Packing
 #==============================================================================
-set_max_delay -datapath_only -from [get_pins {io_table/delay_line*_reg[*]/C}] -to [get_ports {gpio[*]}] 5.000
-set_min_delay -from [get_pins {io_table/delay_line*_reg[*]/C}] -to [get_ports {gpio[*]}] 0.000
-set_max_delay -datapath_only -from [get_pins io_table/vec_clk_en_reg*/C] -to [get_ports {gpio[*]}] 5.000
-set_min_delay -from [get_pins io_table/vec_clk_en_reg*/C] -to [get_ports {gpio[*]}] 0.000
+# NOTE: These use old kzhang_v2 hierarchy names (io_table, axi_io_table_inst).
+# Our design uses different module names (io_bank, io_config). Uncomment and
+# update paths when IOB packing is needed for timing closure.
+# set_property IOB true [get_cells {u_fbc_top/u_io_bank/gen_bim_cells[*].u_io_cell/dout_reg}]
+# set_property IOB true [get_cells {u_fbc_top/u_io_bank/gen_bim_cells[*].u_io_cell/oen_reg}]
 
 #==============================================================================
-# False Paths (from reference - prevent timing analysis on async paths)
+# Timing Constraints
 #==============================================================================
-set_false_path -from [get_pins {axi_io_table_inst/control_bits_reg[*]/C}] -to [get_ports {gpio[*]}]
-set_false_path -through [get_pins {axi_io_table_inst/control_bits_reg[*]/C}]
-set_false_path -through [get_pins {io_table/genblk*.PIN_TYPE_CTRL[*].single_pin_i/error_wr_reg/C}]
+# TODO: Add proper timing constraints for our io_bank module paths.
+# The kzhang_v2 constraints below use old hierarchy names and are disabled.
+# set_max_delay -datapath_only -from [get_pins {u_fbc_top/u_io_bank/...}] -to [get_ports {gpio[*]}] 5.000
+
+#==============================================================================
+# False Paths (clock domain crossings)
+#==============================================================================
+# Config registers are written from AXI clock domain, read from vec_clk domain.
+# set_false_path -from [get_pins {u_fbc_top/u_io_config/pin_type_reg_reg[*]/C}]

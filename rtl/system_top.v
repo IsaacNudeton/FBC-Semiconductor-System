@@ -8,7 +8,7 @@
 // - FBC execution core
 // - Zynq PS block wrapper (for synthesis)
 //
-// Target: Zynq-7020 (xc7z020clg400-1)
+// Target: Zynq-7020 (xc7z020clg484-1)
 //
 //=============================================================================
 
@@ -16,33 +16,33 @@
 
 module system_top (
     //=========================================================================
-    // DDR Pins (directly to Zynq)
+    // DDR Pins (directly to Zynq PS — names match Vivado PS7 IP stub)
     //=========================================================================
-    inout wire [14:0] DDR_addr,
-    inout wire [2:0]  DDR_ba,
-    inout wire        DDR_cas_n,
-    inout wire        DDR_ck_n,
-    inout wire        DDR_ck_p,
-    inout wire        DDR_cke,
-    inout wire        DDR_cs_n,
-    inout wire [3:0]  DDR_dm,
-    inout wire [31:0] DDR_dq,
-    inout wire [3:0]  DDR_dqs_n,
-    inout wire [3:0]  DDR_dqs_p,
-    inout wire        DDR_odt,
-    inout wire        DDR_ras_n,
-    inout wire        DDR_reset_n,
-    inout wire        DDR_we_n,
+    inout wire [14:0] DDR_Addr,
+    inout wire [2:0]  DDR_BankAddr,
+    inout wire        DDR_CAS_n,
+    inout wire        DDR_Clk_n,
+    inout wire        DDR_Clk,
+    inout wire        DDR_CKE,
+    inout wire        DDR_CS_n,
+    inout wire [3:0]  DDR_DM,
+    inout wire [31:0] DDR_DQ,
+    inout wire [3:0]  DDR_DQS_n,
+    inout wire [3:0]  DDR_DQS,
+    inout wire        DDR_ODT,
+    inout wire        DDR_RAS_n,
+    inout wire        DDR_DRSTB,
+    inout wire        DDR_WEB,
+    inout wire        DDR_VRN,
+    inout wire        DDR_VRP,
 
     //=========================================================================
-    // Fixed IO (PS peripherals)
+    // Fixed IO (PS peripherals — names match Vivado PS7 IP stub)
     //=========================================================================
-    inout wire        FIXED_IO_ddr_vrn,
-    inout wire        FIXED_IO_ddr_vrp,
-    inout wire [53:0] FIXED_IO_mio,
-    inout wire        FIXED_IO_ps_clk,
-    inout wire        FIXED_IO_ps_porb,
-    inout wire        FIXED_IO_ps_srstb,
+    inout wire [53:0] MIO,
+    inout wire        PS_CLK,
+    inout wire        PS_PORB,
+    inout wire        PS_SRSTB,
 
     //=========================================================================
     // Test Vector I/O (directly to DUT interface board)
@@ -59,12 +59,9 @@ module system_top (
     // clk_out[2] - Variable 10-25 MHz single-ended
     // clk_out[3] - Fixed 10 MHz differential
     output wire [3:0] clk_out_p,
-    output wire [3:0] clk_out_n,
-
-    //=========================================================================
-    // Status LEDs (directly connected)
-    //=========================================================================
-    output wire [3:0] led
+    output wire [3:0] clk_out_n
+    // No status LEDs — Sonoma board has no user LEDs on PL fabric.
+    // All status readable via AXI registers (axi_fbc_ctrl, axi_vector_status).
 );
 
     //=========================================================================
@@ -148,6 +145,7 @@ module system_top (
     //=========================================================================
     wire irq_done;
     wire irq_error;
+    wire [31:0] fast_error_w;  // Fast pin error flags from io_bank
 
     //=========================================================================
     // Internal Signals - FBC Control
@@ -377,19 +375,19 @@ module system_top (
         // Fast pin control
         .fast_clk_en    (vec_clk_en),     // Fast pins update with vec_clk
 
-        // Fast pin errors (optional - for debugging)
-        .fast_error     (),               // TODO: connect to status register
+        // Fast pin errors (routed through to axi_fbc_ctrl at 0x2C)
+        .fast_error     (fast_error_w),
 
-        // Error BRAMs (directly connect to BRAM controller later)
-        .error_bram_addr     (),
-        .error_bram_data     (),
-        .error_bram_we       (),
-        .error_vec_bram_addr (),
-        .error_vec_bram_data (),
-        .error_vec_bram_we   (),
-        .error_cyc_bram_addr (),
-        .error_cyc_bram_data (),
-        .error_cyc_bram_we   (),
+        // Error BRAMs (wired to error_bram instances)
+        .error_bram_addr     (err_pat_addr),
+        .error_bram_data     (err_pat_data),
+        .error_bram_we       (err_pat_we),
+        .error_vec_bram_addr (err_vec_addr),
+        .error_vec_bram_data (err_vec_data),
+        .error_vec_bram_we   (err_vec_we),
+        .error_cyc_bram_addr (err_cyc_addr),
+        .error_cyc_bram_data (err_cyc_data),
+        .error_cyc_bram_we   (err_cyc_we),
 
         // Interrupts
         .irq_done       (irq_done),
@@ -449,13 +447,11 @@ module system_top (
         .I  (pll_clk[3])
     );
 
-    //=========================================================================
-    // Status LEDs
-    //=========================================================================
-    assign led[0] = clk_locked;         // Clock locked
-    assign led[1] = vec_clk_en;         // Running
-    assign led[2] = irq_done;           // Test complete
-    assign led[3] = irq_error;          // Error detected
+    // Status available via AXI registers:
+    //   clk_locked → clk_ctrl STATUS[0]
+    //   vec_clk_en → clk_ctrl ENABLE[0]
+    //   irq_done   → axi_fbc_ctrl STATUS[1]
+    //   irq_error  → axi_fbc_ctrl STATUS[2]
 
     //=========================================================================
     // Zynq PS Block
@@ -485,38 +481,85 @@ module system_top (
     wire [1:0]  m_axi_gp0_arburst, m_axi_gp0_awburst;
     wire        m_axi_gp0_rlast;
 
-    // AXI Stream DMA interface (HP0 simplified to stream)
-    wire [63:0] s_axi_hp0_wdata;
-    wire        s_axi_hp0_wvalid, s_axi_hp0_wready;
-    wire        s_axi_hp0_wlast;
+    // S_AXI_HP0 — Full AXI read channel (DMA reads DDR via PS7)
+    wire [31:0] s_axi_hp0_araddr;
+    wire [3:0]  s_axi_hp0_arlen;
+    wire [2:0]  s_axi_hp0_arsize;
+    wire [1:0]  s_axi_hp0_arburst;
+    wire        s_axi_hp0_arvalid, s_axi_hp0_arready;
+    wire [63:0] s_axi_hp0_rdata;
+    wire [1:0]  s_axi_hp0_rresp;
+    wire        s_axi_hp0_rvalid, s_axi_hp0_rready;
+    wire        s_axi_hp0_rlast;
+    wire [5:0]  s_axi_hp0_arid, s_axi_hp0_rid;
+
+    // DMA Controller AXI-Lite (0x4040_0000)
+    wire [11:0] axi_dma_awaddr, axi_dma_araddr;
+    wire        axi_dma_awvalid, axi_dma_awready;
+    wire        axi_dma_arvalid, axi_dma_arready;
+    wire [31:0] axi_dma_wdata, axi_dma_rdata;
+    wire [3:0]  axi_dma_wstrb;
+    wire        axi_dma_wvalid, axi_dma_wready;
+    wire [1:0]  axi_dma_bresp, axi_dma_rresp;
+    wire        axi_dma_bvalid, axi_dma_bready;
+    wire        axi_dma_rvalid, axi_dma_rready;
+    wire        irq_dma;  // DMA completion interrupt
+
+    // Error BRAM AXI-Lite (0x4009_0000)
+    wire [11:0] axi_err_awaddr, axi_err_araddr;
+    wire        axi_err_awvalid, axi_err_awready;
+    wire        axi_err_arvalid, axi_err_arready;
+    wire [31:0] axi_err_wdata, axi_err_rdata;
+    wire [3:0]  axi_err_wstrb;
+    wire        axi_err_wvalid, axi_err_wready;
+    wire [1:0]  axi_err_bresp, axi_err_rresp;
+    wire        axi_err_bvalid, axi_err_bready;
+    wire        axi_err_rvalid, axi_err_rready;
+
+    // Error BRAM write ports (from error_counter inside fbc_top)
+    wire [31:0]              err_pat_addr;
+    wire [`VECTOR_WIDTH-1:0] err_pat_data;
+    wire                     err_pat_we;
+    wire [31:0]              err_vec_addr;
+    wire [31:0]              err_vec_data;
+    wire                     err_vec_we;
+    wire [31:0]              err_cyc_addr;
+    wire [63:0]              err_cyc_data;
+    wire                     err_cyc_we;
+
+    // Error BRAM read ports (firmware query side)
+    wire [`VECTOR_WIDTH-1:0] err_pat_rd;
+    wire [31:0]              err_vec_rd;
+    wire [63:0]              err_cyc_rd;
+    reg  [9:0]               err_rd_addr;  // Registered read address from AXI
 
 `ifndef SIMULATION
     // Synthesis: Instantiate actual PS7 block
     processing_system7_0 u_ps (
-        // DDR Interface
-        .DDR_addr           (DDR_addr),
-        .DDR_ba             (DDR_ba),
-        .DDR_cas_n          (DDR_cas_n),
-        .DDR_ck_n           (DDR_ck_n),
-        .DDR_ck_p           (DDR_ck_p),
-        .DDR_cke            (DDR_cke),
-        .DDR_cs_n           (DDR_cs_n),
-        .DDR_dm             (DDR_dm),
-        .DDR_dq             (DDR_dq),
-        .DDR_dqs_n          (DDR_dqs_n),
-        .DDR_dqs_p          (DDR_dqs_p),
-        .DDR_odt            (DDR_odt),
-        .DDR_ras_n          (DDR_ras_n),
-        .DDR_reset_n        (DDR_reset_n),
-        .DDR_we_n           (DDR_we_n),
+        // DDR Interface (names match PS7 IP stub exactly)
+        .DDR_Addr           (DDR_Addr),
+        .DDR_BankAddr       (DDR_BankAddr),
+        .DDR_CAS_n          (DDR_CAS_n),
+        .DDR_Clk_n          (DDR_Clk_n),
+        .DDR_Clk            (DDR_Clk),
+        .DDR_CKE            (DDR_CKE),
+        .DDR_CS_n           (DDR_CS_n),
+        .DDR_DM             (DDR_DM),
+        .DDR_DQ             (DDR_DQ),
+        .DDR_DQS_n          (DDR_DQS_n),
+        .DDR_DQS            (DDR_DQS),
+        .DDR_ODT            (DDR_ODT),
+        .DDR_RAS_n          (DDR_RAS_n),
+        .DDR_DRSTB          (DDR_DRSTB),
+        .DDR_WEB            (DDR_WEB),
+        .DDR_VRN            (DDR_VRN),
+        .DDR_VRP            (DDR_VRP),
 
         // Fixed IO
-        .FIXED_IO_ddr_vrn   (FIXED_IO_ddr_vrn),
-        .FIXED_IO_ddr_vrp   (FIXED_IO_ddr_vrp),
-        .FIXED_IO_mio       (FIXED_IO_mio),
-        .FIXED_IO_ps_clk    (FIXED_IO_ps_clk),
-        .FIXED_IO_ps_porb   (FIXED_IO_ps_porb),
-        .FIXED_IO_ps_srstb  (FIXED_IO_ps_srstb),
+        .MIO                (MIO),
+        .PS_CLK             (PS_CLK),
+        .PS_PORB            (PS_PORB),
+        .PS_SRSTB           (PS_SRSTB),
 
         // Clocks
         .FCLK_CLK0          (clk_100m),
@@ -563,12 +606,56 @@ module system_top (
         .M_AXI_GP0_RREADY   (m_axi_gp0_rready),
         .M_AXI_GP0_RLAST    (m_axi_gp0_rlast),
 
-        // Interrupts (fabric to PS)
+        // S_AXI_HP0 — DMA reads from DDR (read channel only)
+        .S_AXI_HP0_ACLK     (clk_100m),
+        .S_AXI_HP0_ARID      (s_axi_hp0_arid),
+        .S_AXI_HP0_ARADDR    (s_axi_hp0_araddr),
+        .S_AXI_HP0_ARLEN     (s_axi_hp0_arlen),
+        .S_AXI_HP0_ARSIZE    (s_axi_hp0_arsize),
+        .S_AXI_HP0_ARBURST   (s_axi_hp0_arburst),
+        .S_AXI_HP0_ARLOCK    (2'b00),
+        .S_AXI_HP0_ARCACHE   (4'b0011),
+        .S_AXI_HP0_ARPROT    (3'b000),
+        .S_AXI_HP0_ARQOS     (4'b0000),
+        .S_AXI_HP0_ARVALID   (s_axi_hp0_arvalid),
+        .S_AXI_HP0_ARREADY   (s_axi_hp0_arready),
+        .S_AXI_HP0_RID       (s_axi_hp0_rid),
+        .S_AXI_HP0_RDATA     (s_axi_hp0_rdata),
+        .S_AXI_HP0_RRESP     (s_axi_hp0_rresp),
+        .S_AXI_HP0_RLAST     (s_axi_hp0_rlast),
+        .S_AXI_HP0_RVALID    (s_axi_hp0_rvalid),
+        .S_AXI_HP0_RREADY    (s_axi_hp0_rready),
+        // HP0 write channel — tied off (DMA is read-only for MM2S)
+        .S_AXI_HP0_AWID      (6'd0),
+        .S_AXI_HP0_AWADDR    (32'd0),
+        .S_AXI_HP0_AWLEN     (4'd0),
+        .S_AXI_HP0_AWSIZE    (3'd0),
+        .S_AXI_HP0_AWBURST   (2'd0),
+        .S_AXI_HP0_AWLOCK    (2'b00),
+        .S_AXI_HP0_AWCACHE   (4'b0000),
+        .S_AXI_HP0_AWPROT    (3'b000),
+        .S_AXI_HP0_AWQOS     (4'b0000),
+        .S_AXI_HP0_AWVALID   (1'b0),
+        .S_AXI_HP0_AWREADY   (),
+        .S_AXI_HP0_WID       (6'd0),
+        .S_AXI_HP0_WDATA     (64'd0),
+        .S_AXI_HP0_WSTRB     (8'd0),
+        .S_AXI_HP0_WLAST     (1'b0),
+        .S_AXI_HP0_WVALID    (1'b0),
+        .S_AXI_HP0_WREADY    (),
+        .S_AXI_HP0_BID       (),
+        .S_AXI_HP0_BRESP     (),
+        .S_AXI_HP0_BVALID    (),
+        .S_AXI_HP0_BREADY    (1'b1),
+
+        // Interrupts (fabric to PS — 1-bit, all sources OR'd)
         .IRQ_F2P            (irq_f2p_combined)
     );
 
-    wire [15:0] irq_f2p_combined;
-    assign irq_f2p_combined = {13'b0, irq_freq, irq_error, irq_done};
+    // PS7 configured with 1 interrupt input. OR all sources.
+    // Firmware polls status registers to determine source.
+    wire irq_f2p_combined;
+    assign irq_f2p_combined = irq_done | irq_error | irq_freq | irq_dma;
 
 
     //=========================================================================
@@ -582,11 +669,17 @@ module system_top (
     //   0x4008_0000 - 0x4008_0FFF: Clock Ctrl  (axi_clk) - ONETWO freq select
     //
     // Decode: addr[19:16] selects peripheral group
+    //   0x4004_xxxx = FBC Control     0x4005_xxxx = I/O Config
+    //   0x4006_xxxx = Vector Status   0x4007_xxxx = Freq Counter
+    //   0x4008_xxxx = Clock Ctrl      0x4009_xxxx = Error BRAMs
+    //   0x4040_xxxx = DMA Controller
     wire fbc_sel    = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h4);
     wire io_sel     = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h5);
     wire status_sel = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h6);
     wire freq_sel_w = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h7);
     wire clk_sel    = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h8);
+    wire err_sel    = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h9);
+    wire dma_sel    = (m_axi_gp0_awaddr[31:20] == 12'h404);
 
     // Route write address channel
     assign axi_fbc_awaddr     = m_axi_gp0_awaddr[13:0];
@@ -599,11 +692,17 @@ module system_top (
     assign axi_freq_awvalid   = m_axi_gp0_awvalid && freq_sel_w;
     assign axi_clk_awaddr     = m_axi_gp0_awaddr[11:0];
     assign axi_clk_awvalid    = m_axi_gp0_awvalid && clk_sel;
+    assign axi_err_awaddr     = m_axi_gp0_awaddr[11:0];
+    assign axi_err_awvalid    = m_axi_gp0_awvalid && err_sel;
+    assign axi_dma_awaddr     = m_axi_gp0_awaddr[11:0];
+    assign axi_dma_awvalid    = m_axi_gp0_awvalid && dma_sel;
     assign m_axi_gp0_awready = fbc_sel    ? axi_fbc_awready    :
                                io_sel     ? axi_io_awready     :
                                status_sel ? axi_status_awready :
                                freq_sel_w ? axi_freq_awready   :
-                               clk_sel    ? axi_clk_awready    : 1'b1;
+                               clk_sel    ? axi_clk_awready    :
+                               err_sel    ? axi_err_awready    :
+                               dma_sel    ? axi_dma_awready    : 1'b1;
 
     // Route write data channel
     assign axi_fbc_wdata      = m_axi_gp0_wdata;
@@ -621,28 +720,42 @@ module system_top (
     assign axi_clk_wdata      = m_axi_gp0_wdata;
     assign axi_clk_wstrb      = m_axi_gp0_wstrb;
     assign axi_clk_wvalid     = m_axi_gp0_wvalid && clk_sel;
+    assign axi_err_wdata      = m_axi_gp0_wdata;
+    assign axi_err_wstrb      = m_axi_gp0_wstrb;
+    assign axi_err_wvalid     = m_axi_gp0_wvalid && err_sel;
+    assign axi_dma_wdata      = m_axi_gp0_wdata;
+    assign axi_dma_wstrb      = m_axi_gp0_wstrb;
+    assign axi_dma_wvalid     = m_axi_gp0_wvalid && dma_sel;
     assign m_axi_gp0_wready = fbc_sel    ? axi_fbc_wready    :
                               io_sel     ? axi_io_wready     :
                               status_sel ? axi_status_wready :
                               freq_sel_w ? axi_freq_wready   :
-                              clk_sel    ? axi_clk_wready    : 1'b1;
+                              clk_sel    ? axi_clk_wready    :
+                              err_sel    ? axi_err_wready    :
+                              dma_sel    ? axi_dma_wready    : 1'b1;
 
     // Route write response channel
     assign m_axi_gp0_bresp  = fbc_sel    ? axi_fbc_bresp    :
                               io_sel     ? axi_io_bresp     :
                               status_sel ? axi_status_bresp :
                               freq_sel_w ? axi_freq_bresp   :
-                              clk_sel    ? axi_clk_bresp    : 2'b00;
+                              clk_sel    ? axi_clk_bresp    :
+                              err_sel    ? axi_err_bresp    :
+                              dma_sel    ? axi_dma_bresp    : 2'b00;
     assign m_axi_gp0_bvalid = fbc_sel    ? axi_fbc_bvalid    :
                               io_sel     ? axi_io_bvalid     :
                               status_sel ? axi_status_bvalid :
                               freq_sel_w ? axi_freq_bvalid   :
-                              clk_sel    ? axi_clk_bvalid    : 1'b0;
+                              clk_sel    ? axi_clk_bvalid    :
+                              err_sel    ? axi_err_bvalid    :
+                              dma_sel    ? axi_dma_bvalid    : 1'b0;
     assign axi_fbc_bready    = m_axi_gp0_bready && fbc_sel;
     assign axi_io_bready     = m_axi_gp0_bready && io_sel;
     assign axi_status_bready = m_axi_gp0_bready && status_sel;
     assign axi_freq_bready   = m_axi_gp0_bready && freq_sel_w;
     assign axi_clk_bready    = m_axi_gp0_bready && clk_sel;
+    assign axi_err_bready    = m_axi_gp0_bready && err_sel;
+    assign axi_dma_bready    = m_axi_gp0_bready && dma_sel;
 
     // Route read address channel (use same decode on araddr)
     wire fbc_sel_rd    = (m_axi_gp0_araddr[31:20] == 12'h400) && (m_axi_gp0_araddr[19:16] == 4'h4);
@@ -650,6 +763,8 @@ module system_top (
     wire status_sel_rd = (m_axi_gp0_araddr[31:20] == 12'h400) && (m_axi_gp0_araddr[19:16] == 4'h6);
     wire freq_sel_rd   = (m_axi_gp0_araddr[31:20] == 12'h400) && (m_axi_gp0_araddr[19:16] == 4'h7);
     wire clk_sel_rd    = (m_axi_gp0_araddr[31:20] == 12'h400) && (m_axi_gp0_araddr[19:16] == 4'h8);
+    wire err_sel_rd    = (m_axi_gp0_araddr[31:20] == 12'h400) && (m_axi_gp0_araddr[19:16] == 4'h9);
+    wire dma_sel_rd    = (m_axi_gp0_araddr[31:20] == 12'h404);
 
     assign axi_fbc_araddr     = m_axi_gp0_araddr[13:0];
     assign axi_fbc_arvalid    = m_axi_gp0_arvalid && fbc_sel_rd;
@@ -661,33 +776,47 @@ module system_top (
     assign axi_freq_arvalid   = m_axi_gp0_arvalid && freq_sel_rd;
     assign axi_clk_araddr     = m_axi_gp0_araddr[11:0];
     assign axi_clk_arvalid    = m_axi_gp0_arvalid && clk_sel_rd;
+    assign axi_err_araddr     = m_axi_gp0_araddr[11:0];
+    assign axi_err_arvalid    = m_axi_gp0_arvalid && err_sel_rd;
+    assign axi_dma_araddr     = m_axi_gp0_araddr[11:0];
+    assign axi_dma_arvalid    = m_axi_gp0_arvalid && dma_sel_rd;
     assign m_axi_gp0_arready = fbc_sel_rd    ? axi_fbc_arready    :
                                io_sel_rd     ? axi_io_arready     :
                                status_sel_rd ? axi_status_arready :
                                freq_sel_rd   ? axi_freq_arready   :
-                               clk_sel_rd    ? axi_clk_arready    : 1'b1;
+                               clk_sel_rd    ? axi_clk_arready    :
+                               err_sel_rd    ? axi_err_arready    :
+                               dma_sel_rd    ? axi_dma_arready    : 1'b1;
 
     // Route read data channel
     assign m_axi_gp0_rdata  = fbc_sel_rd    ? axi_fbc_rdata    :
                               io_sel_rd     ? axi_io_rdata     :
                               status_sel_rd ? axi_status_rdata :
                               freq_sel_rd   ? axi_freq_rdata   :
-                              clk_sel_rd    ? axi_clk_rdata    : 32'h0;
+                              clk_sel_rd    ? axi_clk_rdata    :
+                              err_sel_rd    ? axi_err_rdata    :
+                              dma_sel_rd    ? axi_dma_rdata    : 32'h0;
     assign m_axi_gp0_rresp  = fbc_sel_rd    ? axi_fbc_rresp    :
                               io_sel_rd     ? axi_io_rresp     :
                               status_sel_rd ? axi_status_rresp :
                               freq_sel_rd   ? axi_freq_rresp   :
-                              clk_sel_rd    ? axi_clk_rresp    : 2'b00;
+                              clk_sel_rd    ? axi_clk_rresp    :
+                              err_sel_rd    ? axi_err_rresp    :
+                              dma_sel_rd    ? axi_dma_rresp    : 2'b00;
     assign m_axi_gp0_rvalid = fbc_sel_rd    ? axi_fbc_rvalid    :
                               io_sel_rd     ? axi_io_rvalid     :
                               status_sel_rd ? axi_status_rvalid :
                               freq_sel_rd   ? axi_freq_rvalid   :
-                              clk_sel_rd    ? axi_clk_rvalid    : 1'b0;
+                              clk_sel_rd    ? axi_clk_rvalid    :
+                              err_sel_rd    ? axi_err_rvalid    :
+                              dma_sel_rd    ? axi_dma_rvalid    : 1'b0;
     assign axi_fbc_rready    = m_axi_gp0_rready && fbc_sel_rd;
     assign axi_io_rready     = m_axi_gp0_rready && io_sel_rd;
     assign axi_status_rready = m_axi_gp0_rready && status_sel_rd;
     assign axi_freq_rready   = m_axi_gp0_rready && freq_sel_rd;
     assign axi_clk_rready    = m_axi_gp0_rready && clk_sel_rd;
+    assign axi_err_rready    = m_axi_gp0_rready && err_sel_rd;
+    assign axi_dma_rready    = m_axi_gp0_rready && dma_sel_rd;
 
     // AXI ID passthrough (single master, IDs don't matter much)
     assign m_axi_gp0_bid = m_axi_gp0_awid;
@@ -695,15 +824,174 @@ module system_top (
     assign m_axi_gp0_rlast = 1'b1;  // Single-beat transactions
 
     //=========================================================================
-    // AXI Stream from DMA (placeholder - connect to HP0 in full design)
+    // FBC DMA Controller (0x4040_0000)
     //=========================================================================
-    // In full design, an AXI DMA IP reads from DDR via S_AXI_HP0 and
-    // outputs AXI Stream to the FBC core. For now, stub the stream.
-    assign axis_tdata  = {4{s_axi_hp0_wdata}};  // Expand 64b to 256b
-    assign axis_tvalid = s_axi_hp0_wvalid;
-    assign s_axi_hp0_wready = axis_tready;
-    assign axis_tlast  = s_axi_hp0_wlast;
-    assign axis_tkeep  = 32'hFFFFFFFF;
+    // Custom DMA: reads from DDR/OCM via S_AXI_HP0, outputs 256-bit
+    // AXI-Stream to FBC decoder. Register interface matches Xilinx DMA
+    // layout so firmware dma.rs works without changes.
+    fbc_dma #(
+        .AXI_ADDR_WIDTH(12),
+        .AXI_DATA_WIDTH(32)
+    ) u_fbc_dma (
+        .clk            (clk_100m),
+        .resetn         (sys_resetn),
+
+        // AXI-Lite slave (register access from PS)
+        .s_axi_awaddr   (axi_dma_awaddr),
+        .s_axi_awvalid  (axi_dma_awvalid),
+        .s_axi_awready  (axi_dma_awready),
+        .s_axi_wdata    (axi_dma_wdata),
+        .s_axi_wstrb    (axi_dma_wstrb),
+        .s_axi_wvalid   (axi_dma_wvalid),
+        .s_axi_wready   (axi_dma_wready),
+        .s_axi_bresp    (axi_dma_bresp),
+        .s_axi_bvalid   (axi_dma_bvalid),
+        .s_axi_bready   (axi_dma_bready),
+        .s_axi_araddr   (axi_dma_araddr),
+        .s_axi_arvalid  (axi_dma_arvalid),
+        .s_axi_arready  (axi_dma_arready),
+        .s_axi_rdata    (axi_dma_rdata),
+        .s_axi_rresp    (axi_dma_rresp),
+        .s_axi_rvalid   (axi_dma_rvalid),
+        .s_axi_rready   (axi_dma_rready),
+
+        // AXI master read (to PS7 S_AXI_HP0)
+        .m_axi_araddr   (s_axi_hp0_araddr),
+        .m_axi_arlen    (s_axi_hp0_arlen),
+        .m_axi_arsize   (s_axi_hp0_arsize),
+        .m_axi_arburst  (s_axi_hp0_arburst),
+        .m_axi_arvalid  (s_axi_hp0_arvalid),
+        .m_axi_arready  (s_axi_hp0_arready),
+        .m_axi_arid     (s_axi_hp0_arid),
+        .m_axi_rdata    (s_axi_hp0_rdata),
+        .m_axi_rresp    (s_axi_hp0_rresp),
+        .m_axi_rvalid   (s_axi_hp0_rvalid),
+        .m_axi_rready   (s_axi_hp0_rready),
+        .m_axi_rlast    (s_axi_hp0_rlast),
+        .m_axi_rid      (s_axi_hp0_rid),
+
+        // AXI-Stream master (256-bit to FBC decoder)
+        .m_axis_tdata   (axis_tdata),
+        .m_axis_tvalid  (axis_tvalid),
+        .m_axis_tready  (axis_tready),
+        .m_axis_tlast   (axis_tlast),
+        .m_axis_tkeep   (axis_tkeep),
+
+        // Interrupt
+        .irq            (irq_dma)
+    );
+
+    //=========================================================================
+    // Error BRAMs (3 instances: pattern, vector number, cycle count)
+    //=========================================================================
+    // Port A: write from error_counter (inside fbc_top)
+    // Port B: read from firmware via AXI at 0x4009_0000
+
+    // Error pattern BRAM (128-bit wide, 1024 deep)
+    error_bram #(
+        .DATA_WIDTH(`VECTOR_WIDTH),
+        .ADDR_WIDTH(10),
+        .DEPTH(`ERROR_BRAM_DEPTH)
+    ) u_err_pat_bram (
+        .clk_a   (vec_clk),
+        .addr_a  (err_pat_addr[9:0]),
+        .din_a   (err_pat_data),
+        .we_a    (err_pat_we),
+        .clk_b   (clk_100m),
+        .addr_b  (err_rd_addr),
+        .dout_b  (err_pat_rd)
+    );
+
+    // Vector number BRAM (32-bit wide, 1024 deep)
+    error_bram #(
+        .DATA_WIDTH(32),
+        .ADDR_WIDTH(10),
+        .DEPTH(`ERROR_BRAM_DEPTH)
+    ) u_err_vec_bram (
+        .clk_a   (vec_clk),
+        .addr_a  (err_vec_addr[9:0]),
+        .din_a   (err_vec_data),
+        .we_a    (err_vec_we),
+        .clk_b   (clk_100m),
+        .addr_b  (err_rd_addr),
+        .dout_b  (err_vec_rd)
+    );
+
+    // Cycle count BRAM (64-bit wide, 1024 deep)
+    error_bram #(
+        .DATA_WIDTH(64),
+        .ADDR_WIDTH(10),
+        .DEPTH(`ERROR_BRAM_DEPTH)
+    ) u_err_cyc_bram (
+        .clk_a   (vec_clk),
+        .addr_a  (err_cyc_addr[9:0]),
+        .din_a   (err_cyc_data),
+        .we_a    (err_cyc_we),
+        .clk_b   (clk_100m),
+        .addr_b  (err_rd_addr),
+        .dout_b  (err_cyc_rd)
+    );
+
+    //=========================================================================
+    // Error BRAM AXI-Lite Read Interface (0x4009_0000)
+    //=========================================================================
+    // Register map:
+    //   0x00: Error index (write to select which error to read)
+    //   0x04: Error pattern [31:0]
+    //   0x08: Error pattern [63:32]
+    //   0x0C: Error pattern [95:64]
+    //   0x10: Error pattern [127:96]
+    //   0x14: Vector number at error
+    //   0x18: Cycle count [31:0]
+    //   0x1C: Cycle count [63:32]
+
+    // Write side: capture error index
+    assign axi_err_awready = 1'b1;
+    assign axi_err_wready  = 1'b1;
+    assign axi_err_bresp   = 2'b00;
+    assign axi_err_bvalid  = axi_err_wvalid && err_sel;
+
+    always @(posedge clk_100m or negedge sys_resetn) begin
+        if (!sys_resetn) begin
+            err_rd_addr <= 10'd0;
+        end else if (axi_err_wvalid && err_sel && axi_err_awaddr[7:0] == 8'h00) begin
+            err_rd_addr <= axi_err_wdata[9:0];
+        end
+    end
+
+    // Read side: mux BRAM outputs based on address offset
+    reg        err_rd_valid;
+    reg [31:0] err_rd_data;
+
+    assign axi_err_arready = !err_rd_valid;
+    assign axi_err_rdata   = err_rd_data;
+    assign axi_err_rresp   = 2'b00;
+    assign axi_err_rvalid  = err_rd_valid;
+
+    always @(posedge clk_100m or negedge sys_resetn) begin
+        if (!sys_resetn) begin
+            err_rd_valid <= 1'b0;
+            err_rd_data  <= 32'd0;
+        end else begin
+            if (err_rd_valid && axi_err_rready) begin
+                err_rd_valid <= 1'b0;
+            end
+            if (axi_err_arvalid && err_sel_rd && !err_rd_valid) begin
+                err_rd_valid <= 1'b1;
+                case (axi_err_araddr[7:0])
+                    8'h00: err_rd_data <= {22'd0, err_rd_addr};
+                    8'h04: err_rd_data <= err_pat_rd[31:0];
+                    8'h08: err_rd_data <= err_pat_rd[63:32];
+                    8'h0C: err_rd_data <= err_pat_rd[95:64];
+                    8'h10: err_rd_data <= err_pat_rd[127:96];
+                    8'h14: err_rd_data <= err_vec_rd;
+                    8'h18: err_rd_data <= err_cyc_rd[31:0];
+                    8'h1C: err_rd_data <= err_cyc_rd[63:32];
+                    default: err_rd_data <= 32'd0;
+                endcase
+            end
+        end
+    end
 
 `else
     // Simulation: Stub signals driven by testbench
