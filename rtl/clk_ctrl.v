@@ -43,16 +43,16 @@ module clk_ctrl #(
     input wire                      s_axi_arvalid,
     output reg                      s_axi_arready,
 
-    output reg [AXI_DATA_WIDTH-1:0] s_axi_rdata,
-    output reg [1:0]                s_axi_rresp,
-    output reg                      s_axi_rvalid,
+    (* dont_touch = "true" *) output reg [AXI_DATA_WIDTH-1:0] s_axi_rdata,
+    (* dont_touch = "true" *) output reg [1:0]                s_axi_rresp,
+    (* dont_touch = "true" *) output reg                      s_axi_rvalid,
     input wire                      s_axi_rready,
 
     //=========================================================================
     // Clock Generator Interface
     //=========================================================================
-    output reg [2:0]                freq_sel,       // To clk_gen
-    output reg                      vec_clk_en,     // To clk_gen
+    (* dont_touch = "true" *) output reg [2:0]  freq_sel,       // To clk_gen
+    (* dont_touch = "true" *) output reg        vec_clk_en,     // To clk_gen
     input wire                      mmcm_locked,    // From clk_gen
     output wire                     bram_gate_n     // Active-low: 0 = BRAMs disabled during clock switch
 );

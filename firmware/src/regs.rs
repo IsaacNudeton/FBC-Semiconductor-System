@@ -518,10 +518,12 @@ impl ClkCtrl {
         // TODO: Use the Zynq AXI timeout mechanism or a watchdog timer
         // to detect non-responsive peripherals safely.
         //
-        // v5 bitstream: dont_touch fixed read path (0x04 reads OK at boot).
-        // But writes to 0x00 still crash — even writing the same value.
-        // Read-before-write to skip same-value writes also crashes on the read.
-        // Root cause still unknown. Default 50MHz works for all operations.
+        // v6: dont_touch on all clk_ctrl regs + wires.
+        // Reads to 0x4008 work at boot but crash at runtime.
+        // Root cause: hand-rolled AXI MUX in system_top.v can't handle
+        // concurrent reads to different peripherals. clk_ctrl read collides
+        // with safety loop's reads to other AXI slaves → MUX deadlock.
+        // Fix: Vivado AXI Interconnect IP or proper arbitration.
         false
     }
 
@@ -567,6 +569,11 @@ impl ClkCtrl {
 
     fn write_reg(&self, offset: usize, val: u32) {
         unsafe { write_volatile((self.base + offset) as *mut u32, val) }
+    }
+
+    /// Public read for debug isolation
+    pub fn read_reg_pub(&self, offset: usize) -> u32 {
+        self.read_reg(offset)
     }
 }
 

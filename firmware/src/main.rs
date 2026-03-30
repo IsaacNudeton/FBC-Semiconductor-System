@@ -1137,20 +1137,11 @@ pub extern "C" fn main() -> ! {
         // clk_ctrl AXI crash FIXED March 25 — root cause was incomplete `case` in
         // AXI write FSM (missing `default:` arms). Verified on hardware.
         if let Some(config) = handler.take_pending_config() {
-            if clk_ctrl.is_accessible() {
-                let freq = VecClockFreq::from_hz(match config.clock_div {
-                    0 => 5_000_000,
-                    1 => 10_000_000,
-                    2 => 25_000_000,
-                    3 => 50_000_000,
-                    4 => 100_000_000,
-                    _ => 50_000_000,
-                });
-                clk_ctrl.set_vec_clock(freq);
-                uart_println!("[CFG] Vector clock set to {} MHz", freq.to_hz() / 1_000_000);
-            } else {
-                uart_println!("[CFG] Clock control NOT accessible — skipping (needs bitstream fix)");
-            }
+            // clk_ctrl AXI reads crash at runtime due to hand-rolled MUX contention.
+            // Works at boot (single transaction), fails during main loop (concurrent reads).
+            // Fix: Vivado AXI Interconnect IP or proper MUX arbitration. For now, skip.
+            uart_println!("[CFG] Clock configure received (clock_div={}) — skipped (MUX contention bug)",
+                config.clock_div);
         }
 
         // Check for state transitions
