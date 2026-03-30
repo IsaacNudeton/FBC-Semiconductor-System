@@ -1137,11 +1137,12 @@ pub extern "C" fn main() -> ! {
         // clk_ctrl AXI crash FIXED March 25 — root cause was incomplete `case` in
         // AXI write FSM (missing `default:` arms). Verified on hardware.
         if let Some(config) = handler.take_pending_config() {
-            // clk_ctrl AXI reads crash at runtime due to hand-rolled MUX contention.
-            // Works at boot (single transaction), fails during main loop (concurrent reads).
-            // Fix: Vivado AXI Interconnect IP or proper MUX arbitration. For now, skip.
-            uart_println!("[CFG] Clock configure received (clock_div={}) — skipped (MUX contention bug)",
-                config.clock_div);
+            // Clock configure disabled. Reading 0x4008_xxxx at runtime crashes ARM.
+            // Same read works at boot. Root cause unknown — not MUX contention
+            // (single master), not MMU (disabled), not periodic access (board stable
+            // for 2+ min with flag=true). Needs ILA capture of AXI bus during crash.
+            // Default 50MHz from vec_clk_en=1 reset works for all operations.
+            let _ = config;
         }
 
         // Check for state transitions
