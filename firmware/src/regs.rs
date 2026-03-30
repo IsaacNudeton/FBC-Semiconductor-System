@@ -484,14 +484,19 @@ impl ClkCtrl {
 
     /// Set vector clock frequency
     ///
-    /// NOTE: clk_ctrl at 0x4008_0000 may not be accessible in all bitstreams.
-    /// The firmware guards access via `is_accessible()` check at boot.
+    /// Set vector clock frequency — safe BUFGCE-gated switching
+    ///
+    /// Clock path: MMCM → BUFGMUX → BUFGCE → vec_clk → BRAMs
+    /// Gate BUFGCE → switch BUFGMUX (glitch hidden) → release BUFGCE
     pub fn set_vec_clock(&self, freq: VecClockFreq) {
-        self.disable();
-        for _ in 0..100 { core::hint::spin_loop(); }
+        // Gate vec_clk via BUFGCE (output goes static)
+        self.write_reg(0x08, 0);
+        crate::delay_us(10);
+        // Switch BUFGMUX (safe — BUFGCE holds output)
         self.write_reg(0x00, freq as u32);
-        for _ in 0..100 { core::hint::spin_loop(); }
-        self.enable();
+        crate::delay_us(10);
+        // Release — vec_clk resumes clean at new frequency
+        self.write_reg(0x08, 1);
     }
 
     /// Check if clk_ctrl peripheral is accessible at 0x4008_0000.
@@ -510,10 +515,10 @@ impl ClkCtrl {
         // TODO: Use the Zynq AXI timeout mechanism or a watchdog timer
         // to detect non-responsive peripherals safely.
         //
-        // DISABLED: BRAM ENA gate fix insufficient — glitched clk_a still triggers
-        // BRAM internals before ena can be sampled. Need BUFGCE gate on vec_clk
-        // BEFORE it reaches BRAMs, controlled by clk_ctrl during freq_sel switch.
-        // RTL fix required in clk_gen.v — gate vec_clk via BUFGCE during switch.
+        // DISABLED: AXI reads to 0x4008_0000 hang the ARM on all bitstreams tested.
+        // The clk_ctrl RTL is correct but the synthesized AXI path is broken.
+        // Needs Vivado schematic-level debugging of the M_AXI_GP0 interconnect.
+        // All other peripherals (0x4004-0x400A except 0x4008) work correctly.
         false
     }
 
