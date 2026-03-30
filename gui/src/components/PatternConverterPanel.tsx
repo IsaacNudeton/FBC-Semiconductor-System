@@ -625,7 +625,10 @@ export default function PatternConverterPanel() {
             <div className="pc-format-row">
               <label>Tester Profile:</label>
               <select value={profile} onChange={(e) => setProfile(e.target.value)}>
-                <option value="sonoma">Sonoma (built-in)</option>
+                <option value="sonoma">Sonoma — 128ch, 6 cores, Zynq 7020</option>
+                <option value="hx">HX — 160ch/axis × 4 axes, 16 supplies, Incal</option>
+                <option value="xp160">XP-160/Shasta — 160ch/axis × 8 axes, 32 supplies, Incal</option>
+                <option value="mcc">MCC — 128ch, 8 supplies, ISE Labs</option>
               </select>
               <span className="pc-hint">or browse for custom profile JSON</span>
             </div>
@@ -785,7 +788,10 @@ export default function PatternConverterPanel() {
             <div className="pc-format-row">
               <label>Profile:</label>
               <select value={importProfile} onChange={(e) => setImportProfile(e.target.value)}>
-                <option value="sonoma">Sonoma (built-in)</option>
+                <option value="sonoma">Sonoma — 128ch, 6 cores, Zynq 7020</option>
+                <option value="hx">HX — 160ch/axis × 4 axes, 16 supplies, Incal</option>
+                <option value="xp160">XP-160/Shasta — 160ch/axis × 8 axes, 32 supplies, Incal</option>
+                <option value="mcc">MCC — 128ch, 8 supplies, ISE Labs</option>
               </select>
             </div>
 

@@ -405,7 +405,7 @@ impl Write for Uart {
 macro_rules! uart_print {
     ($($arg:tt)*) => {{
         use core::fmt::Write;
-        let uart = $crate::hal::Uart::uart0();
+        let mut uart = $crate::hal::Uart::uart0();
         let _ = write!(uart, $($arg)*);
     }};
 }

@@ -21,6 +21,7 @@ pub mod types;
 pub mod vector;
 pub mod sonoma;
 pub mod sonoma_parse;
+pub mod datalog;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -102,6 +103,11 @@ impl FbcClient {
     /// List available network interfaces
     pub fn list_interfaces() -> Vec<String> {
         FbcRawSocket::list_interfaces()
+    }
+
+    /// Receive any raw FBC packet (for listening/monitoring)
+    pub fn recv_any(&mut self) -> Result<Option<([u8; 6], FbcPacket)>> {
+        self.socket.recv().map_err(|e| FbcError::Receive(e.to_string()))
     }
 
     // =========================================================================
@@ -445,13 +451,72 @@ impl FbcClient {
         })
     }
 
-    /// Write EEPROM data
+    /// Write EEPROM data (raw bytes at offset)
     pub fn write_eeprom(&mut self, mac: &[u8; 6], offset: u8, data: &[u8]) -> Result<()> {
         let mut payload = Vec::with_capacity(2 + data.len());
         payload.push(offset);
         payload.push(data.len() as u8);
         payload.extend_from_slice(data);
         self.send_cmd(mac, fbc_protocol::eeprom::WRITE, &payload)
+    }
+
+    /// Write full BIM EEPROM image (256 bytes)
+    ///
+    /// Sends a validated 256-byte BimEeprom image to the board via WRITE_BIM (0x20).
+    /// The firmware validates magic (0xBEEFCAFE) and CRC32 before writing to I2C EEPROM.
+    ///
+    /// # Arguments
+    /// * `mac` - Board MAC address
+    /// * `data` - Exactly 256 bytes (BimEeprom struct serialized)
+    ///
+    /// # Pre-flight checks (host-side)
+    /// - Must be exactly 256 bytes
+    /// - Must have valid magic at offset 0
+    /// - Must have valid CRC32 at offset 248
+    pub fn write_bim(&mut self, mac: &[u8; 6], data: &[u8; 256]) -> Result<()> {
+        // Pre-flight: validate magic
+        let magic = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        if magic != 0xBEEF_CAFE {
+            return Err(FbcError::Board(format!(
+                "Invalid BIM magic: 0x{:08X} (expected 0xBEEFCAFE)", magic
+            )));
+        }
+
+        // Pre-flight: validate CRC32
+        let computed_crc = crc32fast::hash(&data[..248]);
+        let stored_crc = u32::from_le_bytes([data[248], data[249], data[250], data[251]]);
+        if computed_crc != stored_crc {
+            return Err(FbcError::Board(format!(
+                "CRC mismatch: computed 0x{:08X}, stored 0x{:08X}", computed_crc, stored_crc
+            )));
+        }
+
+        // Payload: [len:u32 BE] [data:256 bytes] = 260 bytes
+        let mut payload = Vec::with_capacity(260);
+        payload.extend_from_slice(&256u32.to_be_bytes());
+        payload.extend_from_slice(data);
+        self.send_cmd(mac, fbc_protocol::setup::WRITE_BIM, &payload)
+    }
+
+    // =========================================================================
+    // PMBus Voltage Control
+    // =========================================================================
+
+    /// Set PMBus channel voltage
+    ///
+    /// Sends PMBUS_SET_VOLTAGE (0x87) to set a PMBus supply voltage.
+    /// Firmware enforces EEPROM safety limits (min/max voltage per rail).
+    ///
+    /// # Arguments
+    /// * `mac` - Board MAC address
+    /// * `channel` - PMBus channel number (1-24)
+    /// * `voltage_mv` - Target voltage in millivolts
+    pub fn pmbus_set_voltage(&mut self, mac: &[u8; 6], channel: u8, voltage_mv: u16) -> Result<()> {
+        let mut payload = [0u8; 3];
+        payload[0] = channel;
+        payload[1] = (voltage_mv >> 8) as u8;
+        payload[2] = (voltage_mv & 0xFF) as u8;
+        self.send_cmd(mac, fbc_protocol::power::PMBUS_SET_VOLTAGE, &payload)
     }
 
     // =========================================================================
@@ -546,17 +611,39 @@ impl FbcClient {
     pub fn get_log_info(&mut self, mac: &[u8; 6]) -> Result<LogInfo> {
         let rsp = self.send_req(mac, fbc_protocol::flight_recorder::LOG_INFO_REQ,
                                 fbc_protocol::flight_recorder::LOG_INFO_RSP, &[], 500)?;
-        if rsp.payload.len() < 21 {
+        if rsp.payload.len() < 18 {
             return Err(FbcError::Board("Log info response too short".into()));
         }
         Ok(LogInfo {
             sd_present: rsp.payload[0] != 0,
-            boot_sector: BigEndian::read_u32(&rsp.payload[1..5]),
-            log_start: BigEndian::read_u32(&rsp.payload[5..9]),
-            log_end: BigEndian::read_u32(&rsp.payload[9..13]),
-            current_index: BigEndian::read_u32(&rsp.payload[13..17]),
-            total_entries: BigEndian::read_u32(&rsp.payload[17..21]),
+            sd_health: SdHealth::from_u8(rsp.payload[1]),
+            data_start: BigEndian::read_u32(&rsp.payload[2..6]),
+            capacity: BigEndian::read_u32(&rsp.payload[6..10]),
+            current_index: BigEndian::read_u32(&rsp.payload[10..14]),
+            total_entries: BigEndian::read_u32(&rsp.payload[14..18]),
         })
+    }
+
+    /// Format SD card (destructive — erases all flight recorder data)
+    pub fn sd_format(&mut self, mac: &[u8; 6]) -> Result<bool> {
+        let rsp = self.send_req(mac, fbc_protocol::flight_recorder::SD_FORMAT,
+                                fbc_protocol::flight_recorder::SD_FORMAT_ACK, &[], 5000)?;
+        if rsp.payload.is_empty() {
+            return Err(FbcError::Board("Format response empty".into()));
+        }
+        Ok(rsp.payload[0] == 0)
+    }
+
+    /// Repair SD card (non-destructive — recovers from corruption)
+    pub fn sd_repair(&mut self, mac: &[u8; 6]) -> Result<(bool, SdHealth)> {
+        let rsp = self.send_req(mac, fbc_protocol::flight_recorder::SD_REPAIR,
+                                fbc_protocol::flight_recorder::SD_REPAIR_ACK, &[], 10000)?;
+        if rsp.payload.len() < 2 {
+            return Err(FbcError::Board("Repair response too short".into()));
+        }
+        let success = rsp.payload[0] == 0;
+        let health = SdHealth::from_u8(rsp.payload[1]);
+        Ok((success, health))
     }
 
     /// Read a flight recorder sector
@@ -649,6 +736,152 @@ impl FbcClient {
             received_size: BigEndian::read_u32(&commit_rsp.payload[1..5]),
             computed_checksum: BigEndian::read_u32(&commit_rsp.payload[5..9]),
         })
+    }
+
+    // =========================================================================
+    // DDR Slot Management
+    // =========================================================================
+
+    /// Upload .fbc data to a DDR slot (chunked, 1400 bytes per chunk).
+    /// The firmware stores it persistently in DDR — survives warm resets,
+    /// invalidated only on BIM swap.
+    pub fn upload_to_slot(&mut self, mac: &[u8; 6], slot_id: u8, data: &[u8]) -> Result<()> {
+        let chunk_size = 1400;
+        let total = data.len() as u32;
+        let mut offset = 0u32;
+
+        while (offset as usize) < data.len() {
+            let end = ((offset as usize) + chunk_size).min(data.len());
+            let chunk = &data[offset as usize..end];
+
+            // Payload: [slot_id:u8][offset:u32 BE][total:u32 BE][chunk_len:u16 BE][data...]
+            let mut payload = Vec::with_capacity(11 + chunk.len());
+            payload.push(slot_id);
+            payload.extend_from_slice(&offset.to_be_bytes());
+            payload.extend_from_slice(&total.to_be_bytes());
+            payload.extend_from_slice(&(chunk.len() as u16).to_be_bytes());
+            payload.extend_from_slice(chunk);
+
+            let seq = self.socket.next_seq();
+            let packet = FbcPacket::with_payload(
+                fbc_protocol::slot::UPLOAD_TO_SLOT, seq, payload,
+            );
+            self.socket.send(*mac, &packet)?;
+
+            // Wait for ACK
+            let ack = self.wait_for_cmd(mac, fbc_protocol::slot::UPLOAD_TO_SLOT, Duration::from_millis(500))?;
+            if ack.is_none() {
+                return Err(FbcError::Timeout);
+            }
+
+            offset += chunk.len() as u32;
+        }
+
+        Ok(())
+    }
+
+    /// Get DDR slot status (all 8 slots, 14 bytes each)
+    pub fn get_slot_status(&mut self, mac: &[u8; 6]) -> Result<SlotStatus> {
+        let rsp = self.send_req(mac, fbc_protocol::slot::SLOT_STATUS_REQ,
+                                fbc_protocol::slot::SLOT_STATUS_RSP, &[], 500)?;
+
+        let mut slots = Vec::new();
+        let mut pos = 0;
+        while pos + 14 <= rsp.payload.len() {
+            slots.push(SlotInfo {
+                slot_id: rsp.payload[pos],
+                flags: rsp.payload[pos + 1],
+                num_vectors: BigEndian::read_u32(&rsp.payload[pos + 2..pos + 6]),
+                fbc_size: BigEndian::read_u32(&rsp.payload[pos + 6..pos + 10]),
+                vec_clock_hz: BigEndian::read_u32(&rsp.payload[pos + 10..pos + 14]),
+            });
+            pos += 14;
+        }
+
+        Ok(SlotStatus { slots })
+    }
+
+    /// Invalidate DDR slot(s). slot_id=0xFF invalidates all slots.
+    pub fn invalidate_slot(&mut self, mac: &[u8; 6], slot_id: u8) -> Result<()> {
+        self.send_cmd(mac, fbc_protocol::slot::INVALIDATE, &[slot_id])
+    }
+
+    // =========================================================================
+    // Test Plan Execution
+    // =========================================================================
+
+    /// Upload a test plan to the board's plan executor.
+    pub fn set_test_plan(&mut self, mac: &[u8; 6], plan: &TestPlanDef) -> Result<()> {
+        let payload = plan.to_payload();
+        let rsp = self.send_req(mac, fbc_protocol::testplan::SET_PLAN,
+                                fbc_protocol::testplan::SET_PLAN_ACK, &payload, 500)?;
+        if !rsp.payload.is_empty() && rsp.payload[0] != 0 {
+            return Err(FbcError::Board(format!("SET_PLAN rejected: status={}", rsp.payload[0])));
+        }
+        Ok(())
+    }
+
+    /// Start executing the loaded test plan.
+    pub fn run_test_plan(&mut self, mac: &[u8; 6]) -> Result<()> {
+        let rsp = self.send_req(mac, fbc_protocol::testplan::RUN_PLAN,
+                                fbc_protocol::testplan::RUN_PLAN_ACK, &[], 500)?;
+        if !rsp.payload.is_empty() && rsp.payload[0] != 0 {
+            return Err(FbcError::Board(format!("RUN_PLAN rejected: status={}", rsp.payload[0])));
+        }
+        Ok(())
+    }
+
+    /// Get test plan execution status.
+    pub fn get_plan_status(&mut self, mac: &[u8; 6]) -> Result<PlanStatus> {
+        let rsp = self.send_req(mac, fbc_protocol::testplan::PLAN_STATUS_REQ,
+                                fbc_protocol::testplan::PLAN_STATUS_RSP, &[], 500)?;
+        if rsp.payload.len() < 15 {
+            return Err(FbcError::Board("Plan status response too short".into()));
+        }
+        Ok(PlanStatus {
+            state: PlanState::from_u8(rsp.payload[0]),
+            current_step: rsp.payload[1],
+            total_steps: rsp.payload[2],
+            loop_count: BigEndian::read_u32(&rsp.payload[3..7]),
+            elapsed_secs: BigEndian::read_u32(&rsp.payload[7..11]),
+            total_errors: BigEndian::read_u32(&rsp.payload[11..15]),
+        })
+    }
+
+    // =========================================================================
+    // IO Bank Voltage
+    // =========================================================================
+
+    /// Set IO bank voltage (Bank 13/33/34/35)
+    /// bank: 0=B13, 1=B33, 2=B34, 3=B35
+    pub fn set_io_bank_voltage(&mut self, mac: &[u8; 6], bank: u8, voltage_mv: u16) -> Result<()> {
+        let mut payload = [0u8; 3];
+        payload[0] = bank;
+        BigEndian::write_u16(&mut payload[1..3], voltage_mv);
+        self.send_cmd(mac, fbc_protocol::power::IO_BANK_SET, &payload)
+    }
+
+    // =========================================================================
+    // Min/Max Tracking
+    // =========================================================================
+
+    /// Get XADC min/max values recorded since last reset.
+    /// Returns 4 pairs: (min, max) for temp_mc, vccint_mv, vccaux_mv, vccbram_mv.
+    pub fn get_min_max(&mut self, mac: &[u8; 6]) -> Result<[(i32, i32); 4]> {
+        let rsp = self.send_req(mac, fbc_protocol::runtime::MIN_MAX_REQ,
+                                fbc_protocol::runtime::MIN_MAX_RSP, &[], 500)?;
+        if rsp.payload.len() < 32 {
+            return Err(FbcError::Board("Min/max response too short".into()));
+        }
+        let mut result = [(0i32, 0i32); 4];
+        for i in 0..4 {
+            let off = i * 8;
+            result[i] = (
+                BigEndian::read_i32(&rsp.payload[off..off+4]),
+                BigEndian::read_i32(&rsp.payload[off+4..off+8]),
+            );
+        }
+        Ok(result)
     }
 
     // =========================================================================

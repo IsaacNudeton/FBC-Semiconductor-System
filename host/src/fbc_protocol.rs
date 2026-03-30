@@ -46,6 +46,8 @@ pub mod runtime {
     pub const ERROR: u8 = 0xE0;
     pub const STATUS_REQ: u8 = 0xF0;
     pub const STATUS_RSP: u8 = 0xF1;
+    pub const MIN_MAX_REQ: u8 = 0xF2;
+    pub const MIN_MAX_RSP: u8 = 0xF3;
 }
 
 /// Error Log Commands
@@ -60,6 +62,10 @@ pub mod flight_recorder {
     pub const LOG_READ_RSP: u8 = 0x61;
     pub const LOG_INFO_REQ: u8 = 0x62;
     pub const LOG_INFO_RSP: u8 = 0x63;
+    pub const SD_FORMAT: u8 = 0x64;
+    pub const SD_FORMAT_ACK: u8 = 0x65;
+    pub const SD_REPAIR: u8 = 0x66;
+    pub const SD_REPAIR_ACK: u8 = 0x67;
 }
 
 /// Analog Monitoring Commands
@@ -77,9 +83,12 @@ pub mod power {
     pub const PMBUS_STATUS_REQ: u8 = 0x84;
     pub const PMBUS_STATUS_RSP: u8 = 0x85;
     pub const PMBUS_ENABLE: u8 = 0x86;
+    pub const PMBUS_SET_VOLTAGE: u8 = 0x87;
     pub const EMERGENCY_STOP: u8 = 0x8F;
     pub const POWER_SEQUENCE_ON: u8 = 0x90;
     pub const POWER_SEQUENCE_OFF: u8 = 0x91;
+    pub const IO_BANK_SET: u8 = 0x35;
+    pub const IO_BANK_SET_ACK: u8 = 0x36;
 }
 
 /// EEPROM Commands
@@ -100,6 +109,25 @@ pub mod vector_engine {
     pub const PAUSE: u8 = 0xB5;
     pub const RESUME: u8 = 0xB6;
     pub const STOP: u8 = 0xB7;
+}
+
+/// DDR Slot Commands
+pub mod slot {
+    pub const UPLOAD_TO_SLOT: u8 = 0x22;
+    pub const SLOT_STATUS_REQ: u8 = 0x23;
+    pub const SLOT_STATUS_RSP: u8 = 0x24;
+    pub const INVALIDATE: u8 = 0x25;
+}
+
+/// Test Plan Commands
+pub mod testplan {
+    pub const SET_PLAN: u8 = 0x26;
+    pub const SET_PLAN_ACK: u8 = 0x27;
+    pub const RUN_PLAN: u8 = 0x28;
+    pub const RUN_PLAN_ACK: u8 = 0x29;
+    pub const PLAN_STATUS_REQ: u8 = 0x2A;
+    pub const PLAN_STATUS_RSP: u8 = 0x2B;
+    pub const STEP_RESULT: u8 = 0x2C;
 }
 
 /// Fast Pins Commands (gpio[128:159])
@@ -425,7 +453,7 @@ pub type Result<T> = std::result::Result<T, FbcError>;
 
 /// Raw Ethernet socket for FBC protocol communication
 pub struct FbcRawSocket {
-    interface: NetworkInterface,
+    _interface: NetworkInterface,
     our_mac: [u8; 6],
     tx: Box<dyn DataLinkSender>,
     rx: Box<dyn DataLinkReceiver>,
@@ -442,8 +470,9 @@ impl FbcRawSocket {
     /// - **Windows**: Requires Administrator privileges for raw sockets
     /// - **Linux**: Requires CAP_NET_RAW capability or root
     pub fn new(interface_name: &str) -> Result<Self> {
-        // Find interface
+        // Find interface by exact or partial match on name/description
         let interfaces = pnet_datalink::interfaces();
+
         let interface = interfaces
             .into_iter()
             .find(|iface| {
@@ -459,14 +488,19 @@ impl FbcRawSocket {
             .octets();
 
         // Create channel
-        let (tx, rx) = match pnet_datalink::channel(&interface, Default::default()) {
+        // Promiscuous mode required on Windows to capture non-IP EtherType (0x88B5)
+        let config = pnet_datalink::Config {
+            promiscuous: true,
+            ..Default::default()
+        };
+        let (tx, rx) = match pnet_datalink::channel(&interface, config) {
             Ok(Channel::Ethernet(tx, rx)) => (tx, rx),
             Ok(_) => return Err(FbcError::Interface("Unexpected channel type".into())),
             Err(e) => return Err(FbcError::Interface(format!("Failed to create channel: {}", e))),
         };
 
         Ok(Self {
-            interface,
+            _interface: interface,
             our_mac,
             tx,
             rx,

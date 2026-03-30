@@ -215,6 +215,149 @@
   color: var(--error);
 }
 
+/* Mode Toggle */
+.mode-toggle {
+  display: flex;
+  padding: 8px 16px;
+  gap: 4px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border: 1px solid var(--bg-tertiary);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.mode-btn:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.mode-btn:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.mode-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.mode-btn:hover:not(.active) {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* Sonoma Section */
+.sonoma-section {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--bg-tertiary);
+}
+
+.sonoma-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.scan-input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.sonoma-creds {
+  display: flex;
+  gap: 4px;
+}
+
+.cred-input {
+  flex: 1;
+  padding: 4px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--bg-tertiary);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.btn-scan {
+  padding: 6px;
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-scan:hover {
+  opacity: 0.9;
+}
+
+.btn-scan:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sonoma-boards {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.sonoma-board-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sonoma-board-item:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.sonoma-board-item.selected {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.board-ip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.board-hostname {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
 /* Collapsed state adjustments */
 .sidebar.collapsed .sidebar-status {
   justify-content: center;

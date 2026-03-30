@@ -14,6 +14,13 @@ interface AnalogChannelsResponse {
   external: AnalogReading[]
 }
 
+// Sonoma ADC reading (from sonoma.rs)
+interface SonomaAnalogReading {
+  channel: number
+  raw: number
+  voltage_mv: number
+}
+
 interface AnalogChannel {
   channel: number
   name: string
@@ -62,52 +69,85 @@ const CHANNEL_DEFS: Omit<AnalogChannel, 'value' | 'raw'>[] = [
 ]
 
 export default function AnalogMonitorPanel() {
-  const { selectedBoard, connected } = useStore()
+  const { selectedBoard, connected, controlMode, selectedSonomaBoard } = useStore()
   const [channels, setChannels] = useState<AnalogChannel[]>([])
   const [refreshRate, setRefreshRate] = useState(1000) // ms
   const [filter, setFilter] = useState<'all' | 'xadc' | 'external' | 'temp' | 'current'>('all')
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
 
+  const hasBoard = controlMode === 'fbc' ? (selectedBoard && connected) : !!selectedSonomaBoard
+
   useEffect(() => {
-    if (!selectedBoard || !connected) {
+    if (!hasBoard) {
       setChannels([])
       return
     }
 
     const fetchChannels = async () => {
       try {
-        const result = await invoke<AnalogChannelsResponse>('read_analog_channels', { mac: selectedBoard })
-        const updated: AnalogChannel[] = []
+        if (controlMode === 'fbc') {
+          // FBC mode: existing protocol
+          const result = await invoke<AnalogChannelsResponse>('read_analog_channels', { mac: selectedBoard })
+          const updated: AnalogChannel[] = []
 
-        // Map XADC channels (0-15)
-        for (let i = 0; i < 16 && i < result.xadc.length; i++) {
-          const reading = result.xadc[i]
-          const def = CHANNEL_DEFS[i]
-          if (def) {
-            updated.push({
-              ...def,
-              name: reading.name || def.name,
-              value: def.unit === '°C' ? reading.voltage_mv : reading.voltage_mv,
-              raw: reading.raw,
-            })
+          for (let i = 0; i < 16 && i < result.xadc.length; i++) {
+            const reading = result.xadc[i]
+            const def = CHANNEL_DEFS[i]
+            if (def) {
+              updated.push({
+                ...def,
+                name: reading.name || def.name,
+                value: reading.voltage_mv,
+                raw: reading.raw,
+              })
+            }
           }
-        }
 
-        // Map external ADC channels (16-31)
-        for (let i = 0; i < 16 && i < result.external.length; i++) {
-          const reading = result.external[i]
-          const def = CHANNEL_DEFS[16 + i]
-          if (def) {
-            updated.push({
-              ...def,
-              name: reading.name || def.name,
-              value: reading.voltage_mv,
-              raw: reading.raw,
-            })
+          for (let i = 0; i < 16 && i < result.external.length; i++) {
+            const reading = result.external[i]
+            const def = CHANNEL_DEFS[16 + i]
+            if (def) {
+              updated.push({
+                ...def,
+                name: reading.name || def.name,
+                value: reading.voltage_mv,
+                raw: reading.raw,
+              })
+            }
           }
-        }
 
-        setChannels(updated)
+          setChannels(updated)
+        } else {
+          // Sonoma mode: read XADC + ADC32 separately
+          const updated: AnalogChannel[] = []
+
+          const xadc = await invoke<SonomaAnalogReading[]>('sonoma_read_xadc', { ip: selectedSonomaBoard })
+          for (const r of xadc) {
+            const def = CHANNEL_DEFS[r.channel]
+            if (def) {
+              updated.push({
+                ...def,
+                value: r.voltage_mv,
+                raw: r.raw,
+              })
+            }
+          }
+
+          const adc32 = await invoke<SonomaAnalogReading[]>('sonoma_read_adc32', { ip: selectedSonomaBoard })
+          for (const r of adc32) {
+            // External ADC channels map to CHANNEL_DEFS 16+
+            const def = CHANNEL_DEFS[16 + r.channel]
+            if (def) {
+              updated.push({
+                ...def,
+                value: r.voltage_mv,
+                raw: r.raw,
+              })
+            }
+          }
+
+          setChannels(updated)
+        }
       } catch (e) {
         console.error('Failed to read analog channels:', e)
       }
@@ -116,7 +156,7 @@ export default function AnalogMonitorPanel() {
     fetchChannels()
     const interval = setInterval(fetchChannels, refreshRate)
     return () => clearInterval(interval)
-  }, [selectedBoard, connected, refreshRate])
+  }, [selectedBoard, connected, refreshRate, controlMode, selectedSonomaBoard, hasBoard])
 
   const filteredChannels = filter === 'all'
     ? channels
@@ -139,7 +179,6 @@ export default function AnalogMonitorPanel() {
       return 'var(--success)'
     }
     if (ch.unit === 'mV' && ch.name.includes('VCC')) {
-      // Check if voltage is within typical range
       const nominal = ch.name === 'VCCINT' ? 1000 : ch.name === 'VCCAUX' ? 1800 : 1000
       const deviation = Math.abs(ch.value - nominal) / nominal
       if (deviation > 0.1) return 'var(--error)'
@@ -149,7 +188,7 @@ export default function AnalogMonitorPanel() {
     return 'var(--text-primary)'
   }
 
-  if (!selectedBoard) {
+  if (!hasBoard) {
     return (
       <div className="analog-monitor-panel">
         <div className="no-board-message">
@@ -168,6 +207,9 @@ export default function AnalogMonitorPanel() {
         <div className="header-title">
           <h2>Analog Monitor</h2>
           <span className="channel-count">{channels.length} channels</span>
+          {controlMode === 'sonoma' && (
+            <span className="channel-count" style={{ color: 'var(--accent)' }}>SSH</span>
+          )}
         </div>
         <div className="header-controls">
           <div className="refresh-control">
@@ -277,7 +319,9 @@ export default function AnalogMonitorPanel() {
           <div className="summary-content">
             <div className="summary-label">Max Temperature</div>
             <div className="summary-value">
-              {Math.max(...channels.filter(c => c.category === 'temp').map(c => c.value)).toFixed(1)}°C
+              {channels.filter(c => c.category === 'temp').length > 0
+                ? Math.max(...channels.filter(c => c.category === 'temp').map(c => c.value)).toFixed(1)
+                : '—'}°C
             </div>
           </div>
         </div>

@@ -91,8 +91,8 @@ impl<'a> Max11131<'a> {
         // CSCAN1: AIN0-7 (bits 7:0 = channels 7:0)
         self.write_reg(reg::CSCAN1 | 0xFF)?;
 
-        // Set all channels to unipolar mode
-        self.write_reg(reg::UNIPOLAR | 0xFFFF)?;
+        // Set all channels to unipolar mode (11 data bits max)
+        self.write_reg(reg::UNIPOLAR | 0x07FF)?;
 
         Ok(())
     }

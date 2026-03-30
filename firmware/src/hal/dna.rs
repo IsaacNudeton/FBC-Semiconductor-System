@@ -14,41 +14,58 @@
 //! If DNA is not available (no bitstream loaded), we can use the
 //! ARM CPU ID register as a less-unique fallback.
 
-use super::{Reg, Register};
+use core::ptr::read_volatile;
+use crate::regs::DNA_BASE;
 
-/// ARM CPU ID base address
+/// AXI register offsets within axi_device_dna (0x400A_0000)
+const DNA_LO_OFF: usize     = 0x00;  // DNA[31:0]
+const DNA_HI_OFF: usize     = 0x04;  // {7'b0, DNA[56:32]}
+const DNA_STATUS_OFF: usize = 0x08;  // {31'b0, dna_valid}
+
+/// ARM CPU ID base address (fallback only — identical across all Zynq 7020)
 const MIDR_BASE: usize = 0xF8F00000;
 
 /// Device DNA value (57 bits)
 #[derive(Debug, Clone, Copy)]
 pub struct DeviceDna {
-    /// Lower 32 bits
+    /// Lower 32 bits — DNA[31:0]
     pub low: u32,
-    /// Upper 25 bits (stored in lower bits of u32)
+    /// Upper 25 bits — DNA[56:32] (bits 31:25 always zero)
     pub high: u32,
 }
 
 impl DeviceDna {
-    /// Read device DNA from FPGA fabric (if available)
+    /// Read device DNA from FPGA axi_device_dna peripheral at 0x400A_0000.
     ///
-    /// NOTE: Requires FPGA bitstream with DNA port exposed via AXI.
-    /// If not available, returns None and caller should use fallback.
+    /// The DNA_PORT shift FSM completes ~57 clocks after reset (~570 ns at 100 MHz).
+    /// DNA_STATUS bit 0 = dna_valid. Returns None if not yet valid or not present.
+    ///
+    /// SAFETY: Reading 0x400A_0000 when axi_device_dna is not in the bitstream
+    /// causes an AXI decode error → Data Abort. We guard by checking FBC_CTRL
+    /// version first — the March 12 bitstream has version=0 and no DNA peripheral.
     pub fn read_from_fpga() -> Option<Self> {
-        // TODO: This requires FPGA bitstream support
-        // For now, return None and use fallback
-        None
+        // Guard: FBC_CTRL VERSION at 0x4004_001C reads 0x0001_0000 when axi_device_dna
+        // is present. Old bitstreams without it return 0. Offset 0x00 is CTRL (also 0 at reset).
+        let fbc_version = unsafe { read_volatile(0x4004_001C as *const u32) };
+        if fbc_version == 0 || fbc_version == 0xFFFF_FFFF {
+            return None;
+        }
+
+        let status = unsafe { read_volatile((DNA_BASE + DNA_STATUS_OFF) as *const u32) };
+        if status & 1 == 0 {
+            return None;
+        }
+        let low  = unsafe { read_volatile((DNA_BASE + DNA_LO_OFF) as *const u32) };
+        let high = unsafe { read_volatile((DNA_BASE + DNA_HI_OFF) as *const u32) };
+        Some(Self { low, high })
     }
 
-    /// Generate DNA from ARM CPU ID (fallback when FPGA not programmed)
+    /// Generate DNA from ARM CPU ID (fallback when FPGA not programmed).
     ///
-    /// Uses CPU ID registers to create a semi-unique identifier.
-    /// Not as unique as real DNA, but good enough for MAC generation.
+    /// WARNING: All Zynq 7020 silicon returns MIDR = 0x413FC090.
+    /// This means ALL boards get the same MAC. Only use for bringup/debug.
     pub fn from_cpu_id() -> Self {
-        let midr = Reg::new(MIDR_BASE);
-        let cpu_id = midr.read();
-
-        // Use CPU ID + a counter/variant
-        // In real deployment, you'd combine this with board-specific data
+        let cpu_id = unsafe { read_volatile(MIDR_BASE as *const u32) };
         Self {
             low: cpu_id,
             high: 0xDEAD, // Marker to show this is fallback, not real DNA

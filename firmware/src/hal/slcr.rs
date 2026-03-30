@@ -34,6 +34,7 @@ mod regs {
     pub const UART_CLK_CTRL: usize = 0x154;
     pub const SPI_CLK_CTRL: usize = 0x158;
     pub const CAN_CLK_CTRL: usize = 0x15C;
+    pub const PCAP_CLK_CTRL: usize = 0x168;
     pub const FPGA0_CLK_CTRL: usize = 0x170;
     pub const FPGA1_CLK_CTRL: usize = 0x180;
     pub const FPGA2_CLK_CTRL: usize = 0x190;
@@ -221,6 +222,22 @@ impl Slcr {
     /// Enable SDIO1 clock
     pub fn enable_sd1(&self) {
         self.enable_peripheral_clock(aper_clk::SDI1_EN);
+    }
+
+    /// Enable PCAP clock (required for PS-XADC interface)
+    /// PCAP_CLK_CTRL at 0x168: DIVISOR[25:20], SRCSEL[5:4], CLKACT[0]
+    pub fn enable_pcap(&self) {
+        self.with_unlock(|s| {
+            let val = s.base.offset(regs::PCAP_CLK_CTRL).read();
+            if val & 1 == 0 {
+                // PCAP clock not active — enable with IO PLL, divisor 5 (200MHz)
+                s.base.offset(regs::PCAP_CLK_CTRL).write(
+                    (5 << 20)  // DIVISOR = 5 (IO PLL 1000MHz / 5 = 200MHz)
+                    | (0 << 4) // SRCSEL = IO PLL
+                    | 1        // CLKACT = enabled
+                );
+            }
+        });
     }
 
     /// Set SDIO Clock Control

@@ -1,8 +1,20 @@
 #==============================================================================
 # FBC Semiconductor System - Zynq 7020 Sonoma Constraints
 #==============================================================================
-# Derived from: reference/kzhang_v2_2016/gpio_old_board.xdc
-#               reference/kzhang_v2_2016/broadcom_v21d.xdc
+# Target: XC7Z020-1CLG484C (HPBIController PCB, Rev A-D)
+#
+# Pin assignments derived from:
+#   reference/kzhang_v2_2016/gpio_old_board.xdc   (original Vivado 2015.4 design)
+#   reference/kzhang_v2_2016/broadcom_v21d.xdc    (drive strength + timing)
+#
+# Verified against:
+#   reference/hpbicontroller-rev1/                 (Altium schematics, BOM)
+#   reference/sonoma_docs/04_VERIFIED_FROM_DEVICE_FILES.md  (ELF disassembly)
+#   reference/sonoma_docs/01_HARDWARE_REFERENCE.md (component inventory)
+#
+# AXI Address Map (differs between Sonoma and FBC RTL):
+#   Sonoma (kzhang):  0x43C00000 (design), 0x404E0000 (verified from ELF)
+#   FBC (system_top): 0x40040000 (our address decode)
 #
 # Pin Architecture (160 total):
 #   gpio[0:47]    - Bank 13 (48 pins, through BIM to DUT)
@@ -275,7 +287,48 @@ set_property CLOCK_DEDICATED_ROUTE ANY_CMT_COLUMN [get_nets u_clk_gen/mux_01_out
 # set_max_delay -datapath_only -from [get_pins {u_fbc_top/u_io_bank/...}] -to [get_ports {gpio[*]}] 5.000
 
 #==============================================================================
-# False Paths (clock domain crossings)
+# Clock Domain Crossing Constraints
 #==============================================================================
-# Config registers are written from AXI clock domain, read from vec_clk domain.
-# set_false_path -from [get_pins {u_fbc_top/u_io_config/pin_type_reg_reg[*]/C}]
+# Architecture has 3 clock domains:
+#   1. clk_fpga_0 (100MHz) — AXI bus, firmware registers
+#   2. clk_fpga_1 (200MHz) — delay_clk, io_cell pipeline, vec_clk_cnt
+#   3. vec_clk (5-100MHz via BUFGMUX) — vector execution timing
+#
+# MMCM generates 5 clocks (CLKOUT0-4) + 2 phase-shifted (CLKOUT5-6).
+# BUFGMUX selects one as vec_clk. Vivado sees ALL MMCM outputs as potential
+# sources, creating CDC paths between every pair. These are safe because:
+#   - BUFGMUX handles glitch-free switching
+#   - vec_clk_d1 in io_bank is the synchronizer for vec_clk → delay_clk
+#   - Config registers (pin_type, pulse_ctrl, freq_sel) are quasi-static
+#
+# Strategy: false_path all MMCM inter-clock crossings. The only real CDC
+# (vec_clk edge detection in io_bank) is a 2-FF synchronizer.
+
+# All MMCM-generated clocks are mutually exclusive (only one selected at a time)
+set_clock_groups -logically_exclusive \
+    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT0]] \
+    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT1]] \
+    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT2]] \
+    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT3]] \
+    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT4]]
+
+# AXI domain (clk_fpga_0) ↔ all MMCM clocks: config registers are quasi-static
+set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT*]]
+set_false_path -from [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT*]] -to [get_clocks clk_fpga_0]
+
+# delay_clk (clk_fpga_1) ↔ all MMCM clocks: vec_clk_d1 synchronizer handles CDC
+set_false_path -from [get_clocks clk_fpga_1] -to [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT*]]
+set_false_path -from [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT*]] -to [get_clocks clk_fpga_1]
+
+# AXI ↔ delay_clk: io_config registers written from AXI, read from delay_clk.
+# Written during configuration only, stable during vector execution.
+set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks clk_fpga_1]
+set_false_path -from [get_clocks clk_fpga_1] -to [get_clocks clk_fpga_0]
+
+# freq_sel and vec_clk_en: quasi-static, BUFGMUX handles switching
+set_false_path -from [get_cells u_clk_ctrl/freq_sel_reg[*]]
+set_false_path -from [get_cells u_clk_ctrl/vec_clk_en_reg]
+
+# io_config pin type + pulse ctrl registers: written from AXI, read from delay_clk
+set_false_path -from [get_cells {u_fbc_top/u_io_config/pin_type_reg_reg[*]}]
+set_false_path -from [get_cells {u_fbc_top/u_io_config/pulse_ctrl_reg_reg[*][*]}]

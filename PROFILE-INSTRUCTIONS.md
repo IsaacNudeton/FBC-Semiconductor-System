@@ -388,7 +388,7 @@ These files do NOT need modification — they already handle arbitrary profile n
 | **Power supplies** | 6 (VICOR) | 16 (RMA5608) | 32 (RMA5608) | 8 |
 | **Timing resolution** | 100ps | 200ps | 200ps | 1000ps |
 | **Max rate** | 200MHz | 200MHz | 200MHz | 50MHz |
-| **Thermal** | Watlow, 4 zones | RMA5608, 4 zones | RMA5608, 8 zones | Watlow, 1 zone |
+| **Thermal** | ARM PID → BIM FETs (no external Watlow) | RMA5608, 4 zones | RMA5608, 8 zones | Watlow, 1 zone (via Modbus?) |
 | **Software** | HPBI Controller | INSPIRE v4.9 | INSPIRE XP8 | MCC Controller |
 | **Pattern tool** | VelocityCAE | PatConvert.exe | PatConvert.exe | (custom) |
 | **Vector formats** | STIL/APS/AVC | STIL/AVC/APS | STIL/AVC/APS | APS/Binary |

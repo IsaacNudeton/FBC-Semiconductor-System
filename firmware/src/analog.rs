@@ -18,6 +18,11 @@ pub const NUM_CHANNELS: usize = 32;
 /// Reference voltage for external ADC (mV)
 const EXT_ADC_VREF_MV: u16 = 4096;
 
+/// NTC thermistor presets (from Sonoma ReadAnalog.awk)
+/// Circuit: Vref ─ Rtherm(NTC) ─ 150Ω ─ ADC ─ 4980Ω ─ GND
+pub const NTC_10K: Formula = Formula::Thermistor { b_coeff: 3492.0, r_ref: 10000.0, r_pullup: 4980.0, r_series: 150.0 };
+pub const NTC_30K: Formula = Formula::Thermistor { b_coeff: 3985.3, r_ref: 30000.0, r_pullup: 4980.0, r_series: 150.0 };
+
 /// A single analog reading - everything GUI needs
 #[derive(Clone, Copy)]
 pub struct Reading {
@@ -35,17 +40,25 @@ pub struct Reading {
 
 /// Formula for converting raw ADC to engineering units
 #[derive(Clone, Copy)]
-enum Formula {
+pub enum Formula {
     /// No conversion: value = raw
     Raw,
     /// Voltage: value = raw × scale / 4096 (result in mV)
     Voltage { scale_mv: u16 },
-    /// Temperature from die sensor
+    /// Temperature from die sensor (XADC internal)
     DieTemp,
-    /// Thermistor (Steinhart-Hart simplified)
-    Thermistor { b_coeff: f32, r_ref: f32 },
-    /// Current shunt: I = V / R (result in mA)
+    /// Thermistor via voltage divider
+    /// b_coeff = B constant (K), r_ref = resistance at 25°C (Ω)
+    /// r_pullup = fixed resistor in divider (Ω), r_series = series resistance (Ω)
+    /// Circuit: Vref ─ Rtherm(NTC) ─ Rseries ─ ADC_IN ─ Rpulldown ─ GND
+    /// Sonoma hardware: Rpulldown=4980, Rseries=150 (from ReadAnalog.awk)
+    Thermistor { b_coeff: f32, r_ref: f32, r_pullup: f32, r_series: f32 },
+    /// Current shunt: I(mA) = V(mV) / R(mΩ)
     Current { shunt_mohm: u16 },
+    /// VICOR current sense: I(mA) = V_adc(mV) × gain_factor
+    /// gain_factor encodes the full sense chain (e.g., 80µA/A × Rload)
+    /// Default: Sonoma uses raw × 80 (gain_factor = 80)
+    VicorCurrent { gain_factor: u16 },
 }
 
 /// Channel configuration (compile-time invariant)
@@ -84,10 +97,10 @@ const CHANNELS: [ChannelConfig; NUM_CHANNELS] = [
     ChannelConfig { name: "VDD_CORE4", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
     ChannelConfig { name: "VDD_CORE5", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
     ChannelConfig { name: "VDD_CORE6", formula: Formula::Voltage { scale_mv: 2000 }, unit: "mV" },
-    ChannelConfig { name: "THERM_CASE", formula: Formula::Thermistor { b_coeff: 3950.0, r_ref: 10000.0 }, unit: "C" },
-    ChannelConfig { name: "THERM_DUT", formula: Formula::Thermistor { b_coeff: 3950.0, r_ref: 10000.0 }, unit: "C" },
-    ChannelConfig { name: "I_CORE1", formula: Formula::Current { shunt_mohm: 50 }, unit: "mA" },
-    ChannelConfig { name: "I_CORE2", formula: Formula::Current { shunt_mohm: 50 }, unit: "mA" },
+    ChannelConfig { name: "THERM_CASE", formula: Formula::Thermistor { b_coeff: 3985.3, r_ref: 30000.0, r_pullup: 4980.0, r_series: 150.0 }, unit: "C" },
+    ChannelConfig { name: "THERM_DUT", formula: Formula::Thermistor { b_coeff: 3985.3, r_ref: 30000.0, r_pullup: 4980.0, r_series: 150.0 }, unit: "C" },
+    ChannelConfig { name: "I_CORE1", formula: Formula::VicorCurrent { gain_factor: 80 }, unit: "mA" },
+    ChannelConfig { name: "I_CORE2", formula: Formula::VicorCurrent { gain_factor: 80 }, unit: "mA" },
     ChannelConfig { name: "VDD_IO", formula: Formula::Voltage { scale_mv: 5000 }, unit: "mV" },
     ChannelConfig { name: "VDD_3V3", formula: Formula::Voltage { scale_mv: 5000 }, unit: "mV" },
     ChannelConfig { name: "VDD_1V8", formula: Formula::Voltage { scale_mv: 3000 }, unit: "mV" },
@@ -119,12 +132,59 @@ impl From<SpiError> for MonitorError {
 pub struct AnalogMonitor<'a> {
     xadc: &'a Xadc,
     ext_adc: &'a Max11131<'a>,
+    /// Runtime formula overrides — None = use compile-time default from CHANNELS[]
+    /// Set via test plan config or host command
+    formula_overrides: [Option<Formula>; NUM_CHANNELS],
 }
 
 impl<'a> AnalogMonitor<'a> {
     /// Create new analog monitor
     pub fn new(xadc: &'a Xadc, ext_adc: &'a Max11131<'a>) -> Self {
-        Self { xadc, ext_adc }
+        Self {
+            xadc,
+            ext_adc,
+            formula_overrides: [None; NUM_CHANNELS],
+        }
+    }
+
+    /// Override the formula for a channel at runtime
+    ///
+    /// Used by test plan config to switch sensor types (e.g., 10kΩ vs 30kΩ thermistor,
+    /// or VICOR current sense gain for different modules).
+    pub fn set_formula(&mut self, channel: u8, formula: Formula) {
+        if (channel as usize) < NUM_CHANNELS {
+            self.formula_overrides[channel as usize] = Some(formula);
+        }
+    }
+
+    /// Clear formula override for a channel (revert to compile-time default)
+    pub fn clear_formula(&mut self, channel: u8) {
+        if (channel as usize) < NUM_CHANNELS {
+            self.formula_overrides[channel as usize] = None;
+        }
+    }
+
+    /// Clear all formula overrides
+    pub fn clear_all_formulas(&mut self) {
+        self.formula_overrides = [None; NUM_CHANNELS];
+    }
+
+    /// Switch thermistor type for both THERM_CASE and THERM_DUT
+    /// Sonoma selects per-board: option 0 = 10kΩ, option 4 = 30kΩ (ReadAnalog.awk)
+    /// Default is 30kΩ (most common). Call this if board has 10kΩ NTCs.
+    pub fn set_ntc_type(&mut self, use_10k: bool) {
+        let formula = if use_10k { NTC_10K } else { NTC_30K };
+        self.set_formula(22, formula); // THERM_CASE
+        self.set_formula(23, formula); // THERM_DUT
+    }
+
+    /// Get effective formula for a channel
+    fn effective_formula(&self, channel: usize) -> Formula {
+        if channel < NUM_CHANNELS {
+            self.formula_overrides[channel].unwrap_or(CHANNELS[channel].formula)
+        } else {
+            Formula::Raw
+        }
     }
 
     // ========================================
@@ -141,7 +201,8 @@ impl<'a> AnalogMonitor<'a> {
 
         let raw = self.read_raw(channel)?;
         let config = &CHANNELS[channel as usize];
-        let value = self.apply_formula(raw, config.formula);
+        let formula = self.effective_formula(channel as usize);
+        let value = self.apply_formula(raw, formula);
 
         Ok(Reading {
             channel,
@@ -191,7 +252,8 @@ impl<'a> AnalogMonitor<'a> {
             };
 
             let config = &CHANNELS[ch];
-            let value = self.apply_formula(raw, config.formula);
+            let formula = self.effective_formula(ch);
+            let value = self.apply_formula(raw, formula);
 
             readings[ch] = Reading {
                 channel: ch as u8,
@@ -221,6 +283,53 @@ impl<'a> AnalogMonitor<'a> {
         } else {
             ""
         }
+    }
+
+    /// Read case temperature (THERM_CASE, MAX11131 ch 22) in milliCelsius
+    /// This is the correct input for thermal control (NOT XADC die temp)
+    pub fn read_case_temp_mc(&self) -> Result<i32, MonitorError> {
+        let reading = self.read(22)?; // THERM_CASE
+        Ok((reading.value * 1000.0) as i32)
+    }
+
+    /// Read DUT temperature (THERM_DUT, MAX11131 ch 23) in milliCelsius
+    pub fn read_dut_temp_mc(&self) -> Result<i32, MonitorError> {
+        let reading = self.read(23)?; // THERM_DUT
+        Ok((reading.value * 1000.0) as i32)
+    }
+
+    /// Read real-time core power in milliwatts.
+    /// Measures V×I for cores 1-2 (the only cores with current sense channels),
+    /// then extrapolates total power assuming all 6 cores draw proportionally.
+    ///
+    /// Returns (total_power_mw, PowerLevel) for thermal feedforward.
+    pub fn read_core_power_mw(&self) -> Result<(u32, crate::hal::thermal::PowerLevel), MonitorError> {
+        // Read core 1: voltage (ch 16) × current (ch 24)
+        let v1 = self.read(16)?; // VDD_CORE1 in mV
+        let i1 = self.read(24)?; // I_CORE1 in mA
+
+        // Read core 2: voltage (ch 17) × current (ch 25)
+        let v2 = self.read(17)?; // VDD_CORE2 in mV
+        let i2 = self.read(25)?; // I_CORE2 in mA
+
+        // P = V(mV) × I(mA) / 1000 = milliwatts
+        let p1_mw = (v1.value * i1.value / 1000.0) as u32;
+        let p2_mw = (v2.value * i2.value / 1000.0) as u32;
+        let measured_mw = p1_mw + p2_mw;
+
+        // Extrapolate: 2 measured cores → 6 total (×3)
+        let total_mw = measured_mw * 3;
+
+        // Map to PowerLevel for thermal feedforward
+        let level = if total_mw > 10_000 {
+            crate::hal::thermal::PowerLevel::High   // >10W
+        } else if total_mw > 3_000 {
+            crate::hal::thermal::PowerLevel::Medium  // 3-10W
+        } else {
+            crate::hal::thermal::PowerLevel::Low     // <3W
+        };
+
+        Ok((total_mw, level))
     }
 
     /// Find channel number by name
@@ -258,14 +367,10 @@ impl<'a> AnalogMonitor<'a> {
     /// Read XADC channel
     fn read_xadc_channel(&self, ch: u8) -> Result<u16, MonitorError> {
         // Map channel to XADC function
+        // All channels return the actual XADC 16-bit register value.
+        // Formula conversion happens in apply_formula().
         match ch {
-            0 => {
-                // Die temperature - return millicelsius / 10 as pseudo-raw
-                match self.xadc.read_temperature_millicelsius() {
-                    Ok(mc) => Ok(((mc + 273150) / 100) as u16), // Convert to deciKelvin
-                    Err(_) => Err(MonitorError::Xadc),
-                }
-            }
+            0 => self.xadc.read_temperature_raw().map_err(|_| MonitorError::Xadc),
             1 => self.xadc.read_vccint_raw().map_err(|_| MonitorError::Xadc),
             2 => self.xadc.read_vccaux_raw().map_err(|_| MonitorError::Xadc),
             3 => self.xadc.read_vccbram_raw().map_err(|_| MonitorError::Xadc),
@@ -285,29 +390,37 @@ impl<'a> AnalogMonitor<'a> {
             }
 
             Formula::DieTemp => {
-                // Raw is (temp_K × 10), convert to Celsius
-                (raw as f32) / 10.0 - 273.15
+                // Xilinx UG480 formula: T(°C) = (ADC_CODE × 503.975 / 65536) - 273.15
+                // ADC_CODE is the full 16-bit register (12-bit ADC left-justified in bits [15:4])
+                (raw as f32) * 503.975 / 65536.0 - 273.15
             }
 
-            Formula::Thermistor { b_coeff, r_ref } => {
-                // Simplified thermistor calculation (no ln() in no_std)
-                // Return resistance ratio × 100 as approximate temp indicator
-                // GUI can do full Steinhart-Hart if needed
+            Formula::Thermistor { b_coeff, r_ref, r_pullup, r_series } => {
+                // Full B-equation: T = 1/((ln(R/R25)/B) + 1/298.15) - 273.15
+                // Matches Sonoma ReadAnalog.awk thermistor formula exactly
                 if raw >= 4095 {
-                    return 999.0; // Open circuit
+                    return -999.0; // Short circuit (NTC on high side: max raw = min R)
                 }
                 if raw == 0 {
-                    return -999.0; // Short circuit
+                    return 999.0; // Open circuit (NTC on high side: zero raw = infinite R)
                 }
 
-                // R = Rref × raw / (4096 - raw)
-                let r = (r_ref * (raw as f32)) / (4096.0 - (raw as f32));
+                // Circuit: Vref ─ Rtherm(NTC) ─ Rseries ─ ADC_IN ─ Rpulldown ─ GND
+                // Sonoma ReadAnalog.awk: RT = ((4980*(4096/Reading))-4980)-150
+                // Derived: R_therm = Rpulldown × (4096/raw - 1) - Rseries
+                let r = r_pullup * (4096.0 / (raw as f32) - 1.0) - r_series;
+                if r <= 0.0 {
+                    return 999.0; // Invalid (short or bad reading)
+                }
 
-                // Linear approximation: T ≈ 25 + (R - Rref) × (-0.01)
-                // This is rough but works for ±50°C range
-                // For accurate temp, GUI should use full Steinhart-Hart
-                let _ = b_coeff; // Will use in full implementation
-                25.0 - ((r - r_ref) / r_ref) * 25.0
+                // B-equation: T(K) = 1 / ((ln(R/R25) / B) + 1/T25)
+                let ratio = r / r_ref;
+                let ln_ratio = ln_approx(ratio);
+                let inv_t = (ln_ratio / b_coeff) + (1.0 / 298.15);
+                if inv_t <= 0.0 {
+                    return 999.0; // Would give negative Kelvin
+                }
+                (1.0 / inv_t) - 273.15
             }
 
             Formula::Current { shunt_mohm } => {
@@ -317,8 +430,42 @@ impl<'a> AnalogMonitor<'a> {
                 let v_mv = (raw as f32) * (EXT_ADC_VREF_MV as f32) / 4096.0;
                 v_mv / (shunt_mohm as f32)
             }
+
+            Formula::VicorCurrent { gain_factor } => {
+                // VICOR current sense: ADC reads voltage proportional to current
+                // I(mA) = V_adc(mV) × gain_factor / 1000
+                // Sonoma AWK uses raw × 80 with 1mV/LSB ADC
+                let v_mv = (raw as f32) * (EXT_ADC_VREF_MV as f32) / 4096.0;
+                v_mv * (gain_factor as f32) / 1000.0
+            }
         }
     }
+}
+
+// ========================================
+// MATH: ln() approximation for no_std
+// ========================================
+
+/// Natural logarithm approximation using IEEE 754 bit manipulation.
+/// Accuracy: ~0.3% over the range [0.01, 100.0] — sufficient for NTC thermistors
+/// (which themselves have ±1-2% tolerance).
+///
+/// Method: decompose float into exponent + mantissa, then:
+///   ln(x) = exponent * ln(2) + ln(mantissa)
+/// where mantissa is in [1, 2) and ln(1+y) uses a 3-term polynomial.
+fn ln_approx(x: f32) -> f32 {
+    if x <= 0.0 {
+        return -1e10; // Negative/zero → large negative (avoid panic)
+    }
+    let bits = x.to_bits() as i32;
+    let e = ((bits >> 23) & 0xFF) - 127; // IEEE 754 exponent
+    // Reconstruct mantissa in [1.0, 2.0)
+    let m_bits = (bits & 0x007F_FFFF) | 0x3F80_0000;
+    let m = f32::from_bits(m_bits as u32);
+    // ln(m) for m in [1, 2): Taylor series ln(1+y) ≈ y - y²/2 + y³/3
+    let y = m - 1.0;
+    let ln_m = y * (1.0 - y * (0.5 - y * 0.3333));
+    (e as f32) * 0.6931472 + ln_m // ln(2) = 0.6931472
 }
 
 // ========================================

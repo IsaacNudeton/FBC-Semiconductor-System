@@ -210,11 +210,28 @@ impl<'a> FbcDecompressor<'a> {
 /// This is sized for typical programs - larger programs may need chunked streaming
 pub const MAX_BYTECODE_SIZE: usize = 64 * 1024; // 64KB
 
+/// Size of one FPGA instruction word in bytes.
+///
+/// fbc_dma.v reads 4 × 64-bit beats = 32 bytes per burst, producing one
+/// 256-bit AXI-Stream word. axi_stream_fbc.v extracts:
+///   [63:0]    = instruction (opcode + flags + operand)
+///   [191:64]  = 128-bit payload (pin values for SET_PINS/SET_OEN)
+///   [255:192] = reserved
+///
+/// Every instruction MUST be exactly 32 bytes in the DMA buffer.
+/// Misalignment causes the DMA to split instructions across bursts,
+/// feeding garbled data to the decoder.
+const INSTR_WORD_SIZE: usize = 32;
+
 /// Decompress FBC data to FPGA bytecode
+///
+/// Converts compressed .fbc opcodes (0x01 VECTOR_FULL, 0x03 VECTOR_RUN, etc.)
+/// into 32-byte FPGA instruction words (SET_PINS, PATTERN_REP, HALT) suitable
+/// for DMA transfer to fbc_decoder.v.
 ///
 /// # Arguments
 /// * `compressed_data` - The compressed vector data (after header + pin config)
-/// * `output` - Buffer to write FPGA bytecode into
+/// * `output` - Buffer to write FPGA bytecode into (must be 32-byte aligned capacity)
 ///
 /// # Returns
 /// Number of bytes written to output, or None if buffer too small
@@ -223,46 +240,53 @@ pub fn decompress_to_bytecode(compressed_data: &[u8], output: &mut [u8]) -> Opti
     let mut write_pos = 0;
 
     while let Some((vector, repeat_count)) = decompressor.next() {
-        // Generate SET_PINS instruction (0xC0)
-        // Format: [opcode(1), flags(1), operand(6), payload(16)]
-        // We use first 128 bits (16 bytes) of vector for pins
-
-        // Need 8 bytes for instruction + 16 bytes for payload = 24 bytes
-        if write_pos + 24 > output.len() {
-            return None; // Buffer too small
+        // Each instruction = 32 bytes:
+        //   bytes  0-7:  64-bit instruction word (opcode in byte 7 on LE)
+        //   bytes  8-23: 128-bit payload (pin values)
+        //   bytes 24-31: reserved (zeros)
+        if write_pos + INSTR_WORD_SIZE > output.len() {
+            return None;
         }
 
-        // Build SET_PINS instruction word (8 bytes)
-        // Opcode 0xC0 in bits [63:56], flags 0 in bits [55:48]
+        // Zero the full 32-byte word first (clears reserved bytes + payload)
+        output[write_pos..write_pos + INSTR_WORD_SIZE].fill(0);
+
+        // Bytes 0-7: SET_PINS instruction
         let instr = FbcInstr::new(crate::fbc::FbcOpcode::SetPins, 0, 0);
         let instr_bytes = instr.to_u64().to_le_bytes();
         output[write_pos..write_pos + 8].copy_from_slice(&instr_bytes);
-        write_pos += 8;
 
-        // Copy first 128 bits (16 bytes) of vector as payload
-        output[write_pos..write_pos + 16].copy_from_slice(&vector[..16]);
-        write_pos += 16;
+        // Bytes 8-23: first 128 bits (16 bytes) of 160-bit vector as payload
+        output[write_pos + 8..write_pos + 24].copy_from_slice(&vector[..16]);
+
+        // Bytes 24-31: already zeroed (reserved)
+        write_pos += INSTR_WORD_SIZE;
 
         // Generate PATTERN_REP if repeat > 1
         if repeat_count > 1 {
-            if write_pos + 8 > output.len() {
+            if write_pos + INSTR_WORD_SIZE > output.len() {
                 return None;
             }
+
+            output[write_pos..write_pos + INSTR_WORD_SIZE].fill(0);
+
             let rep_instr = FbcInstr::pattern_rep(repeat_count - 1);
             let rep_bytes = rep_instr.to_u64().to_le_bytes();
             output[write_pos..write_pos + 8].copy_from_slice(&rep_bytes);
-            write_pos += 8;
+            // Bytes 8-31: zeros (PATTERN_REP has no payload, count is in operand)
+            write_pos += INSTR_WORD_SIZE;
         }
     }
 
     // Add HALT instruction
-    if write_pos + 8 > output.len() {
+    if write_pos + INSTR_WORD_SIZE > output.len() {
         return None;
     }
+    output[write_pos..write_pos + INSTR_WORD_SIZE].fill(0);
     let halt = FbcInstr::halt();
     let halt_bytes = halt.to_u64().to_le_bytes();
     output[write_pos..write_pos + 8].copy_from_slice(&halt_bytes);
-    write_pos += 8;
+    write_pos += INSTR_WORD_SIZE;
 
     Some(write_pos)
 }

@@ -2,29 +2,34 @@
 //!
 //! Controls 6 VICOR PRM+VTM power modules via DAC (voltage) + GPIO (enable)
 //!
-//! Core mapping (INVARIANT from schematic):
-//! | Core | DAC Ch | MIO Pin |
-//! |------|--------|---------|
-//! | 1    | 9      | 0       |
-//! | 2    | 3      | 39      |
-//! | 3    | 7      | 47      |
-//! | 4    | 8      | 8       |
-//! | 5    | 4      | 38      |
-//! | 6    | 2      | 37      |
+//! Core numbering follows Sonoma production AWK scripts (RunVectors lines 487-493).
+//! NOTE: Software core numbers differ from PCB silkscreen EN_COREPS labels!
+//!
+//! | SW Core | DAC Ch | MIO Pin | PCB Label   |
+//! |---------|--------|---------|-------------|
+//! | 1       | 9      | 0       | EN_COREPS1  |
+//! | 2       | 3      | 39      | EN_COREPS4  |
+//! | 3       | 7      | 47      | EN_COREPS3  |
+//! | 4       | 8      | 8       | EN_COREPS2  |
+//! | 5       | 4      | 38      | EN_COREPS5  |
+//! | 6       | 2      | 37      | EN_COREPS6  |
+//!
+//! Verified from: reference/sonoma_docs/04_VERIFIED_FROM_DEVICE_FILES.md
+//!                reference/scratch/aurora_s0034/PowerOn
 
 use super::{Bu2505, Gpio, MioPin, SpiError, delay_us};
 
 /// Number of VICOR core supplies
 pub const NUM_CORES: usize = 6;
 
-/// Core mapping: (DAC channel, MIO pin) - INVARIANT from schematic
+/// Core mapping: (DAC channel, MIO pin) — from Sonoma production AWK
 const CORE_MAP: [(u8, u8); NUM_CORES] = [
-    (9, 0),   // Core 1
-    (3, 39),  // Core 2
-    (7, 47),  // Core 3
-    (8, 8),   // Core 4
-    (4, 38),  // Core 5
-    (2, 37),  // Core 6
+    (9, 0),   // SW Core 1 → MIO0  (PCB: EN_COREPS1)
+    (3, 39),  // SW Core 2 → MIO39 (PCB: EN_COREPS4)
+    (7, 47),  // SW Core 3 → MIO47 (PCB: EN_COREPS3)
+    (8, 8),   // SW Core 4 → MIO8  (PCB: EN_COREPS2)
+    (4, 38),  // SW Core 5 → MIO38 (PCB: EN_COREPS5)
+    (2, 37),  // SW Core 6 → MIO37 (PCB: EN_COREPS6)
 ];
 
 /// Voltage limits (safety)

@@ -78,12 +78,25 @@ mod xadc_regs {
 
 /// CFG register bits
 mod cfg {
+    pub const ENABLE: u32 = 1 << 31;          // PS-XADC bridge enable (CRITICAL)
     pub const CFIFOTH_MASK: u32 = 0xF << 20;  // Command FIFO threshold
     pub const DFIFOTH_MASK: u32 = 0xF << 16;  // Data FIFO threshold
     pub const WEDGE: u32 = 1 << 13;           // Write edge
     pub const REDGE: u32 = 1 << 12;           // Read edge
     pub const TCKRATE_MASK: u32 = 0x3 << 8;   // Clock rate
     pub const IGAP_MASK: u32 = 0x1F;          // Inter-access gap
+}
+
+/// CMDFIFO command bits (JTAG-like DRP bridge)
+mod cmd {
+    pub const READ: u32  = 0x04000000;  // DRP read  (bit 26)
+    pub const WRITE: u32 = 0x08000000;  // DRP write (bit 27)
+    pub const NOP: u32   = 0x00000000;  // NOP — pushes previous result to RDFIFO
+}
+
+/// MCTL register bits
+mod mctl {
+    pub const RESET: u32 = 1 << 4;  // XADC reset (POR default = asserted)
 }
 
 /// MSTS register bits
@@ -120,65 +133,97 @@ impl Xadc {
         Self { base: Reg::new(XADC_BASE) }
     }
 
-    /// Initialize XADC
+    /// Initialize XADC PS-XADC bridge
+    ///
+    /// Must set CFG.ENABLE (bit 31) and clear MCTL reset — without these,
+    /// all DRP transactions return zero. Verified on hardware March 2026.
     pub fn init(&self) {
-        // Configure PS-XADC interface
-        // Use default clock rate, reasonable FIFO thresholds
-        let config = (4 << 20)  // Command FIFO threshold = 4
-            | (4 << 16)         // Data FIFO threshold = 4
-            | (2 << 8)          // Clock rate = divide by 4
-            | 5;                // Inter-access gap = 5
+        // Step 1: Clear MCTL reset (POR default = 0x10, XADC held in reset)
+        self.base.offset(regs::MCTL).write(0x00000000);
 
+        // Step 2: Configure PS-XADC bridge with ENABLE bit
+        // Without bit 31, the bridge ignores all CMDFIFO writes → all reads return 0
+        let config = cfg::ENABLE         // 0x80000000 — CRITICAL
+            | (4 << 20)                  // Command FIFO threshold = 4
+            | (4 << 16)                  // Data FIFO threshold = 4
+            | cfg::REDGE                 // Read on rising edge
+            | (2 << 8)                   // TCKRATE = divide by 8
+            | 20;                        // Inter-access gap = 20
         self.base.offset(regs::CFG).write(config);
 
-        // Clear any pending interrupts
+        // Step 3: Clear any pending interrupts
         self.base.offset(regs::INT_STS).write(0xFFFFFFFF);
 
-        // Mask all interrupts (we'll poll)
+        // Step 4: Mask all interrupts (we poll)
         self.base.offset(regs::INT_MASK).write(0xFFFFFFFF);
+
+        // Step 5: Drain any stale data from RDFIFO
+        for _ in 0..16 {
+            let msts = self.base.offset(regs::MSTS).read();
+            if msts & msts::DFIFOE != 0 {
+                break; // RDFIFO empty
+            }
+            let _ = self.base.offset(regs::RDFIFO).read();
+        }
+
+        // Step 6: Brief delay for XADC sequencer to start converting
+        super::delay_us(2000);
     }
 
-    /// Read raw 16-bit value from XADC register
+    /// Read raw 16-bit value from XADC register via DRP bridge
+    ///
+    /// The PS-XADC bridge uses SPI-like protocol: each CMDFIFO write
+    /// produces one RDFIFO entry, but the data is from the PREVIOUS
+    /// command. So we send READ + NOP, discard first result, keep second.
+    /// (Matches Xilinx xadcps driver XAdcPs_ReadInternalReg pattern.)
     fn read_raw(&self, reg: u8) -> Result<u16, XadcError> {
-        // Wait for command FIFO not full
+        // Send read command: 0x04000000 | (addr << 16)
+        self.write_fifo(cmd::READ | ((reg as u32) << 16))?;
+
+        // Send NOP to push the read result into RDFIFO
+        self.write_fifo(cmd::NOP)?;
+
+        // Discard first RDFIFO entry (stale from previous transaction)
+        self.read_fifo()?;
+
+        // Second RDFIFO entry is our actual data
+        let raw = self.read_fifo()?;
+        Ok((raw & 0xFFFF) as u16)
+    }
+
+    /// Write to XADC register via DRP bridge
+    ///
+    /// Write command: 0x08000000 | (addr << 16) | data
+    /// (Previous code used 0x04000000 which is READ, not WRITE!)
+    fn write_raw(&self, reg: u8, value: u16) -> Result<(), XadcError> {
+        let write_cmd = cmd::WRITE | ((reg as u32) << 16) | (value as u32);
+        self.write_fifo(write_cmd)?;
+        // Drain the response entry this produces
+        let _ = self.read_fifo();
+        Ok(())
+    }
+
+    /// Write a command to CMDFIFO, waiting for space
+    fn write_fifo(&self, data: u32) -> Result<(), XadcError> {
         for _ in 0..1000 {
             if self.base.offset(regs::MSTS).read() & msts::CFIFOF == 0 {
-                break;
+                self.base.offset(regs::CMDFIFO).write(data);
+                return Ok(());
             }
             super::delay_us(1);
         }
-
-        // Command format: [31:26]=0, [25:16]=addr, [15:0]=data (ignored for read)
-        // Bit 26 = 0 for read, 1 for write
-        let cmd = (reg as u32) << 16;
-        self.base.offset(regs::CMDFIFO).write(cmd);
-
-        // Wait for data FIFO not empty
-        for _ in 0..10000 {
-            if self.base.offset(regs::MSTS).read() & msts::DFIFOE == 0 {
-                return Ok((self.base.offset(regs::RDFIFO).read() & 0xFFFF) as u16);
-            }
-            super::delay_us(1);
-        }
-
         Err(XadcError::Timeout)
     }
 
-    /// Write to XADC register
-    fn write_raw(&self, reg: u8, value: u16) -> Result<(), XadcError> {
-        // Wait for command FIFO not full
-        for _ in 0..1000 {
-            if self.base.offset(regs::MSTS).read() & msts::CFIFOF == 0 {
-                break;
+    /// Read from RDFIFO, waiting for data
+    fn read_fifo(&self) -> Result<u32, XadcError> {
+        for _ in 0..10000 {
+            if self.base.offset(regs::MSTS).read() & msts::DFIFOE == 0 {
+                return Ok(self.base.offset(regs::RDFIFO).read());
             }
             super::delay_us(1);
         }
-
-        // Command format: bit 26 = 1 for write
-        let cmd = (1 << 26) | ((reg as u32) << 16) | (value as u32);
-        self.base.offset(regs::CMDFIFO).write(cmd);
-
-        Ok(())
+        Err(XadcError::Timeout)
     }
 
     // =========================================================================
@@ -193,17 +238,16 @@ impl Xadc {
     /// Read on-chip temperature in degrees Celsius
     ///
     /// Formula: T(°C) = (ADC * 503.975 / 65536) - 273.15
+    /// Uses u64 intermediate: raw * 503975 overflows u32 for raw > 8524
     pub fn read_temperature_celsius(&self) -> Result<i32, XadcError> {
-        let raw = self.read_temperature_raw()? as u32;
-        // Scaled calculation to avoid floating point
-        // T * 1000 = (raw * 503975 / 65536) - 273150
+        let raw = self.read_temperature_raw()? as u64;
         let millidegrees = ((raw * 503975) / 65536) as i32 - 273150;
         Ok(millidegrees / 1000)
     }
 
     /// Read on-chip temperature in millidegrees Celsius (more precision)
     pub fn read_temperature_millicelsius(&self) -> Result<i32, XadcError> {
-        let raw = self.read_temperature_raw()? as u32;
+        let raw = self.read_temperature_raw()? as u64;
         let millidegrees = ((raw * 503975) / 65536) as i32 - 273150;
         Ok(millidegrees)
     }
@@ -216,6 +260,29 @@ impl Xadc {
     /// Get minimum recorded temperature (raw)
     pub fn get_min_temperature_raw(&self) -> Result<u16, XadcError> {
         self.read_raw(xadc_regs::MIN_TEMP)
+    }
+
+    /// Read all XADC min/max registers (8 values: temp + 3 voltages, min + max)
+    /// Returns: [(min_temp_mc, max_temp_mc), (min_vccint_mv, max_vccint_mv),
+    ///           (min_vccaux_mv, max_vccaux_mv), (min_vccbram_mv, max_vccbram_mv)]
+    pub fn read_min_max(&self) -> Result<[(i32, i32); 4], XadcError> {
+        let raw_to_temp_mc = |raw: u16| -> i32 {
+            ((raw as u64 * 503975 / 65536) as i32) - 273150
+        };
+        let raw_to_mv = |raw: u16| -> i32 {
+            (raw as u32 * 3000 / 65536) as i32
+        };
+
+        Ok([
+            (raw_to_temp_mc(self.read_raw(xadc_regs::MIN_TEMP)?),
+             raw_to_temp_mc(self.read_raw(xadc_regs::MAX_TEMP)?)),
+            (raw_to_mv(self.read_raw(xadc_regs::MIN_VCCINT)?),
+             raw_to_mv(self.read_raw(xadc_regs::MAX_VCCINT)?)),
+            (raw_to_mv(self.read_raw(xadc_regs::MIN_VCCAUX)?),
+             raw_to_mv(self.read_raw(xadc_regs::MAX_VCCAUX)?)),
+            (raw_to_mv(self.read_raw(xadc_regs::MIN_VCCBRAM)?),
+             raw_to_mv(self.read_raw(xadc_regs::MAX_VCCBRAM)?)),
+        ])
     }
 
     // =========================================================================

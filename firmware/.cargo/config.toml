@@ -21,3 +21,4 @@ FBC_HEAP_SIZE = "65536"
 [alias]
 elf = "build --release"
 bin = "objcopy -O binary target/armv7a-none-eabi/release/fbc-firmware fbc-firmware.bin"
+host-test = "test --lib --target x86_64-pc-windows-msvc"

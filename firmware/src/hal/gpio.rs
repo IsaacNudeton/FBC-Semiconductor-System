@@ -43,13 +43,37 @@ mod regs {
     pub const OEN_3: usize = 0x2C8;   // Output enable Bank 3 (EMIO)
 }
 
-/// Known MIO pin assignments (from HPBI Controller schematic OP009-001-SCH)
-/// ACTIVE ACTIVE ACTIVE - ACTIVE ACTIVE ACTIVE - ACTIVE ACTIVE ACTIVE - ACTIVE ACTIVE
+/// Known MIO pin assignments
+/// Sources:
+///   - VICOR enables: reference/sonoma_docs/04_VERIFIED_FROM_DEVICE_FILES.md (AWK lines 487-493)
+///   - VICOR enables: reference/scratch/aurora_s0034/PowerOn (ToggleMio.elf calls)
+///   - Peripherals: HPBI Controller schematic OP009-001-SCH
 pub mod mio_pins {
     // =========================================================================
-    // ACTIVE ACTIVE ACTIVE - ACTIVE ACTIVE from schematic 2024-02-12:
+    // VICOR Core Enables (verified from production PowerOn scripts + AWK)
+    // NOTE: Software core numbers (1-6) follow the AWK script numbering,
+    //       which differs from the physical EN_COREPS labels on the PCB.
+    //       MIO  | AWK Core | PCB Label   | DAC Ch
+    //       0    | Core 1   | EN_COREPS1  | DAC9
+    //       39   | Core 2   | EN_COREPS4  | DAC3
+    //       47   | Core 3   | EN_COREPS3  | DAC7
+    //       8    | Core 4   | EN_COREPS2  | DAC8
+    //       38   | Core 5   | EN_COREPS5  | DAC4
+    //       37   | Core 6   | EN_COREPS6  | DAC2
     // =========================================================================
-    pub const STATUS_LED: u8 = 0;    // MIO0  = Ball G6 = STATUS_LED (active high)
+    pub const EN_CORE1: u8 = 0;      // MIO0  = EN_COREPS1 (VICOR Core 1 enable)
+    pub const EN_CORE4: u8 = 8;      // MIO8  = EN_COREPS2 (VICOR Core 4 enable)
+    pub const EN_CORE6: u8 = 37;     // MIO37 = EN_COREPS6 (VICOR Core 6 enable)
+    pub const EN_CORE5: u8 = 38;     // MIO38 = EN_COREPS5 (VICOR Core 5 enable)
+    pub const EN_CORE2: u8 = 39;     // MIO39 = EN_COREPS4 (VICOR Core 2 enable)
+    pub const EN_CORE3: u8 = 47;     // MIO47 = EN_COREPS3 (VICOR Core 3 enable)
+
+    // ADC bank select:
+    pub const ADC_BANK_SEL: u8 = 36; // MIO36 = ADC channel bank select (ch 16-31)
+
+    // =========================================================================
+    // System pins (verified from schematic + firmware)
+    // =========================================================================
     pub const PHY_RESET: u8 = 11;    // MIO11 = Ball B4 = PHY_RESET_B_AND (active low)
 
     // UART1 for console (directly verified):
@@ -57,10 +81,9 @@ pub mod mio_pins {
     pub const CONSOLE_UART_TX: u8 = 49;  // MIO49 = Ball C14 = CONSOLE_UART_TX
 
     // =========================================================================
-    // Other pins from schematic:
+    // Other pins from schematic (unverified against production scripts):
     // =========================================================================
     pub const DEV_ID0: u8 = 7;       // MIO7  = Ball D5 = DEV_ID0
-    pub const DEV_ID1: u8 = 8;       // MIO8  = Ball E5 = DEV_ID1
     pub const SMBUS_ALERT_N: u8 = 9; // MIO9  = Ball C4 = SMBUS_ALERT_N (input)
     pub const DUT_PRESENT_N: u8 = 10;// MIO10 = Ball G7 = DUT_PRESENT_N (input)
 
@@ -71,7 +94,6 @@ pub mod mio_pins {
     // DAC/ADC:
     pub const DAC_LD: u8 = 14;       // MIO14 = Ball B6 = DAC_LD
     pub const ADC_EOC: u8 = 15;      // MIO15 = Ball F6 = ADC_EOC/MIO15
-    pub const DAC_RESET: u8 = 47;    // MIO47 = Ball B10 = DAC_RESET/MIO47
 
     // I2C0:
     pub const I2C0_SCL: u8 = 50;     // MIO50 = Ball D13 = I2C0_SCL
@@ -231,37 +253,15 @@ impl Gpio {
     }
 
     // =========================================================================
-    // Sonoma-specific helpers - DISABLED pending schematic verification
-    // =========================================================================
-    // TODO: These functions need correct MIO pin mappings from schematic.
-    // ADC mux and CORE enables may be controlled via DAC/EMIO, not MIO GPIO.
-    //
-    // pub fn set_adc_mux(&self, value: bool) { ... }
-    // pub fn set_core_enable(&self, core: u8, enable: bool) { ... }
-    // pub fn enable_all_cores(&self) { ... }
-    // pub fn disable_all_cores(&self) { ... }
-
-    // =========================================================================
-    // Status LED (MIO0 per schematic)
+    // ADC bank select (MIO36)
     // =========================================================================
 
-    /// Initialize status LED pin as output (safe - has current limiting resistor on PCB)
-    pub fn init_status_led(&self) {
-        let pin = MioPin::new(mio_pins::STATUS_LED);
+    /// Select ADC channel bank
+    /// `high = false` → channels 0-15, `high = true` → channels 16-31
+    pub fn set_adc_bank_sel(&self, high: bool) {
+        let pin = MioPin::new(mio_pins::ADC_BANK_SEL);
         self.set_output(pin);
-        self.write_pin(pin, false);  // Start off
-    }
-
-    /// Set status LED state
-    pub fn set_status_led(&self, on: bool) {
-        let pin = MioPin::new(mio_pins::STATUS_LED);
-        self.write_pin(pin, on);
-    }
-
-    /// Toggle status LED
-    pub fn toggle_status_led(&self) {
-        let pin = MioPin::new(mio_pins::STATUS_LED);
-        self.toggle(pin);
+        self.write_pin(pin, high);
     }
 
     // =========================================================================

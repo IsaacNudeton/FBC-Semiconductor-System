@@ -20,7 +20,7 @@
 //! - Crossover: 2 + N = 21 → N = 19 (but we use hamming distance, so 15 is safer)
 
 use super::format::*;
-use super::fvec::{FvecProgram, FvecVector};
+use super::fvec::FvecProgram;
 
 /// Compiler configuration
 #[derive(Debug, Clone)]
@@ -40,6 +40,72 @@ impl Default for CompilerConfig {
             sparse_crossover: SPARSE_CROSSOVER,
             enable_xor: false, // Not implemented yet
         }
+    }
+}
+
+/// Thermal accumulator for compile-time profiling
+struct ThermalAccum {
+    total_toggles: u64,
+    total_active: u64,
+    vectors_in_segment: u32,
+    segment_start: u32,
+    segments: Vec<ThermalSegment>,
+}
+
+impl ThermalAccum {
+    fn new() -> Self {
+        Self {
+            total_toggles: 0,
+            total_active: 0,
+            vectors_in_segment: 0,
+            segment_start: 0,
+            segments: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, toggles: usize, active_pins: usize, repeat: u32) {
+        for _ in 0..repeat {
+            self.total_toggles += toggles as u64;
+            self.total_active += active_pins as u64;
+            self.vectors_in_segment += 1;
+
+            if self.vectors_in_segment >= THERMAL_SEGMENT_SIZE {
+                self.flush_segment();
+            }
+        }
+    }
+
+    fn flush_segment(&mut self) {
+        if self.vectors_in_segment == 0 {
+            return;
+        }
+
+        let avg_toggles = (self.total_toggles / self.vectors_in_segment as u64) as u8;
+        let avg_active = (self.total_active / self.vectors_in_segment as u64) as u8;
+
+        let power_level = match (avg_toggles, avg_active) {
+            (t, a) if t > 40 && a > 60 => ThermalPowerLevel::High,
+            (t, a) if t > 20 || a > 40 => ThermalPowerLevel::Medium,
+            _ => ThermalPowerLevel::Low,
+        };
+
+        self.segments.push(ThermalSegment {
+            vector_offset: self.segment_start,
+            avg_toggle_rate: avg_toggles.min(160),
+            avg_active_pins: avg_active.min(160),
+            power_level,
+            _reserved: 0,
+        });
+
+        self.segment_start += self.vectors_in_segment;
+        self.total_toggles = 0;
+        self.total_active = 0;
+        self.vectors_in_segment = 0;
+    }
+
+    fn finish(mut self) -> Vec<ThermalSegment> {
+        self.flush_segment();
+        self.segments
     }
 }
 
@@ -66,12 +132,21 @@ impl VectorCompiler {
         let mut data = Vec::new();
         let mut total_vectors: u64 = 0;
         let mut prev_vector = Vector::ZERO;
+        let mut thermal_prev = Vector::ZERO;
+        let mut thermal = ThermalAccum::new();
         let mut pending_run: Option<(Vector, u32)> = None;
 
         // Process each vector entry
         for entry in &program.vectors {
             let vec = entry.vector;
             let repeat = entry.repeat;
+
+            // Thermal analysis: XOR + popcount (free — already computed by compression)
+            let diff = vec.xor(&thermal_prev);
+            let toggles = diff.popcount();
+            let active = vec.popcount();
+            thermal.add(toggles, active, repeat);
+            thermal_prev = vec;
 
             // Handle runs of the same vector
             if let Some((run_vec, run_count)) = pending_run {
@@ -83,6 +158,7 @@ impl VectorCompiler {
                 } else {
                     // Flush the pending run
                     self.emit_run(&mut data, run_vec, run_count, &mut prev_vector);
+                    pending_run = None;
                 }
             }
 
@@ -107,17 +183,33 @@ impl VectorCompiler {
         // Emit END opcode
         data.push(OP_END);
 
+        // Finalize thermal profile and append after OP_END
+        let thermal_segments = thermal.finish();
+        let profile = ThermalProfile { segments: thermal_segments };
+        let profile_bytes = profile.to_bytes();
+        data.extend_from_slice(&profile_bytes);
+
         // Build the FBC file
+        let mut reserved = [0u8; 8];
+        let seg_count = profile.segments.len() as u32;
+        reserved[0..4].copy_from_slice(&seg_count.to_le_bytes());
+
+        let flags = if !profile.segments.is_empty() {
+            FLAG_THERMAL_PROFILE
+        } else {
+            0
+        };
+
         let header = FbcHeader {
             magic: FBC_MAGIC,
             version: FBC_VERSION,
             pin_count: PIN_COUNT as u8,
-            flags: 0,
+            flags,
             num_vectors: total_vectors.min(u32::MAX as u64) as u32,
             compressed_size: data.len() as u32,
             vec_clock_hz: program.clock_hz,
             crc32: 0, // Will be calculated later
-            _reserved: [0; 8],
+            _reserved: reserved,
         };
 
         let mut fbc = FbcFile {
@@ -182,17 +274,21 @@ impl VectorCompiler {
 
     /// Emit a run of identical vectors
     fn emit_run(&self, data: &mut Vec<u8>, vec: Vector, count: u32, prev: &mut Vector) {
-        // First emit the vector itself
-        if vec != *prev {
+        // Emit the vector itself if it differs from previous
+        let emitted = if vec != *prev {
             self.emit_vector(data, vec, prev);
-        }
+            true
+        } else {
+            false
+        };
 
-        // Then emit run opcode if count > 1
-        if count > 1 {
-            // The run count is how many ADDITIONAL times to repeat
-            // (the first one was already emitted by emit_vector)
+        // RUN count = additional repeats beyond the emitted vector
+        // If we emitted the vector, run_count = count - 1
+        // If vector was same as prev (not emitted), run_count = count
+        let run_count = if emitted { count - 1 } else { count };
+        if run_count > 0 {
             data.push(OP_VECTOR_RUN);
-            data.extend_from_slice(&(count - 1).to_le_bytes());
+            data.extend_from_slice(&run_count.to_le_bytes());
         }
     }
 }
@@ -341,6 +437,10 @@ impl<'a> VectorDecompiler<'a> {
 
             let op = self.data[self.pos];
 
+            if op == OP_END {
+                break; // thermal profile data follows — not vectors
+            }
+
             if op == OP_VECTOR_RUN {
                 self.pos += 1;
                 if self.pos + 4 > self.data.len() {
@@ -486,5 +586,60 @@ mod tests {
         let fbc = compile_fvec(&program);
 
         assert!(fbc.validate_crc());
+    }
+
+    #[test]
+    fn test_thermal_profile() {
+        // 2048 ZERO vectors + 2048 ONES vectors = 4 segments of 1024
+        let program = FvecProgram::from_str(r#"
+            ZERO REPEAT 2048
+            ONES REPEAT 2048
+        "#).unwrap();
+
+        let fbc = compile_fvec(&program);
+
+        // Header should have thermal flag
+        assert!(fbc.has_thermal_profile());
+        assert_eq!(fbc.thermal_segment_count(), 4);
+
+        // Extract and verify profile
+        let profile = fbc.thermal_profile().unwrap();
+        assert_eq!(profile.segments.len(), 4);
+
+        // Segment 0: 1024 ZERO vectors (zero toggles, zero active)
+        assert_eq!(profile.segments[0].vector_offset, 0);
+        assert_eq!(profile.segments[0].avg_toggle_rate, 0);
+        assert_eq!(profile.segments[0].avg_active_pins, 0);
+        assert_eq!(profile.segments[0].power_level, ThermalPowerLevel::Low);
+
+        // Segment 1: 1024 more ZEROs (still zero toggles)
+        assert_eq!(profile.segments[1].vector_offset, 1024);
+
+        // Segment 2: first 1024 of ONES — transition from ZERO→ONES at boundary
+        // Only the first vector has 160 toggles, rest have 0
+        assert_eq!(profile.segments[2].vector_offset, 2048);
+        assert_eq!(profile.segments[2].avg_active_pins, 160);
+
+        // Segment 3: remaining ONES
+        assert_eq!(profile.segments[3].vector_offset, 3072);
+        assert_eq!(profile.segments[3].avg_active_pins, 160);
+
+        // CRC should still validate with thermal data
+        assert!(fbc.validate_crc());
+    }
+
+    #[test]
+    fn test_thermal_profile_small() {
+        // Fewer than 1024 vectors = 1 segment
+        let program = FvecProgram::from_str("ZERO REPEAT 100").unwrap();
+        let fbc = compile_fvec(&program);
+
+        assert!(fbc.has_thermal_profile());
+        assert_eq!(fbc.thermal_segment_count(), 1);
+
+        let profile = fbc.thermal_profile().unwrap();
+        assert_eq!(profile.segments[0].vector_offset, 0);
+        assert_eq!(profile.segments[0].avg_toggle_rate, 0);
+        assert_eq!(profile.segments[0].power_level, ThermalPowerLevel::Low);
     }
 }

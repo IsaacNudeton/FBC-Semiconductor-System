@@ -43,14 +43,20 @@ pub mod runtime {
     pub const ERROR:            u8 = 0xE0;  // Controller → GUI
     pub const STATUS_REQ:       u8 = 0xF0;  // GUI → Controller
     pub const STATUS_RSP:       u8 = 0xF1;  // Controller → GUI
+    pub const MIN_MAX_REQ:      u8 = 0xF2;  // GUI → Controller
+    pub const MIN_MAX_RSP:      u8 = 0xF3;  // Controller → GUI (XADC min/max: 4×(min_i32+max_i32) = 32 bytes)
 }
 
-/// Flight Recorder Commands (SD card log retrieval)
+/// Flight Recorder Commands (SD card log retrieval + maintenance)
 pub mod flight_recorder {
     pub const LOG_READ_REQ:     u8 = 0x60;  // GUI → Controller (request log sector)
     pub const LOG_READ_RSP:     u8 = 0x61;  // Controller → GUI (log data)
     pub const LOG_INFO_REQ:     u8 = 0x62;  // GUI → Controller (request log info)
     pub const LOG_INFO_RSP:     u8 = 0x63;  // Controller → GUI (log metadata)
+    pub const SD_FORMAT:        u8 = 0x64;  // GUI → Controller (format SD card)
+    pub const SD_FORMAT_ACK:    u8 = 0x65;  // Controller → GUI (format result)
+    pub const SD_REPAIR:        u8 = 0x66;  // GUI → Controller (repair SD card)
+    pub const SD_REPAIR_ACK:    u8 = 0x67;  // Controller → GUI (repair result + health)
 }
 
 /// Firmware Update Commands (network reflash)
@@ -81,9 +87,12 @@ pub mod power {
     pub const PMBUS_STATUS_REQ: u8 = 0x84;  // GUI → Controller
     pub const PMBUS_STATUS_RSP: u8 = 0x85;  // Controller → GUI
     pub const PMBUS_ENABLE:     u8 = 0x86;  // GUI → Controller (addr, enable)
+    pub const PMBUS_SET_VOLTAGE:u8 = 0x87;  // GUI → Controller (channel, voltage_mv)
     pub const EMERGENCY_STOP:   u8 = 0x8F;  // GUI → Controller (disable all)
     pub const POWER_SEQUENCE_ON:u8 = 0x90;  // GUI → Controller (voltages[6])
     pub const POWER_SEQUENCE_OFF:u8 = 0x91; // GUI → Controller
+    pub const IO_BANK_SET:      u8 = 0x35;  // GUI → Controller [bank:u8(0-3)][mv:u16 BE]
+    pub const IO_BANK_SET_ACK:  u8 = 0x36;  // Controller → GUI [status:u8]
 }
 
 /// EEPROM Commands (BimEeprom - 256 bytes)
@@ -92,6 +101,14 @@ pub mod eeprom {
     pub const READ_RSP:         u8 = 0xA1;  // Controller → GUI (data)
     pub const WRITE:            u8 = 0xA2;  // GUI → Controller (offset, data)
     pub const WRITE_ACK:        u8 = 0xA3;  // Controller → GUI (status)
+}
+
+/// Board Config Commands (runtime overrides without touching EEPROM)
+pub mod board_config {
+    pub const SET_OVERRIDE:     u8 = 0x31;  // GUI → Controller (field_id, value)
+    pub const CLEAR_OVERRIDES:  u8 = 0x32;  // GUI → Controller (clear all overrides)
+    pub const GET_EFFECTIVE:    u8 = 0x33;  // GUI → Controller (request effective config)
+    pub const EFFECTIVE_RSP:    u8 = 0x34;  // Controller → GUI (effective config)
 }
 
 /// Vector Engine Commands (extended control)
@@ -104,6 +121,25 @@ pub mod vector {
     pub const PAUSE:            u8 = 0xB5;  // GUI → Controller
     pub const RESUME:           u8 = 0xB6;  // GUI → Controller
     pub const STOP:             u8 = 0xB7;  // GUI → Controller
+}
+
+/// DDR Slot Commands (persistent vector storage)
+pub mod slot {
+    pub const UPLOAD_TO_SLOT:   u8 = 0x22;  // GUI → Controller (slot_id + offset + total + chunk_size + data)
+    pub const SLOT_STATUS_REQ:  u8 = 0x23;  // GUI → Controller
+    pub const SLOT_STATUS_RSP:  u8 = 0x24;  // Controller → GUI (8 slot headers)
+    pub const INVALIDATE:       u8 = 0x25;  // GUI → Controller (slot_id or 0xFF=all)
+}
+
+/// Test Plan Commands (autonomous burn-in execution)
+pub mod testplan {
+    pub const SET_PLAN:         u8 = 0x26;  // GUI → Controller (plan definition)
+    pub const SET_PLAN_ACK:     u8 = 0x27;  // Controller → GUI
+    pub const RUN_PLAN:         u8 = 0x28;  // GUI → Controller (start execution)
+    pub const RUN_PLAN_ACK:     u8 = 0x29;  // Controller → GUI
+    pub const PLAN_STATUS_REQ:  u8 = 0x2A;  // GUI → Controller
+    pub const PLAN_STATUS_RSP:  u8 = 0x2B;  // Controller → GUI (step results + progress)
+    pub const STEP_RESULT:      u8 = 0x2C;  // Controller → GUI (unsolicited, after each step)
 }
 
 /// Fast Pin Commands (gpio[128:159] direct control)
@@ -448,27 +484,27 @@ impl LogReadRspPayload {
 }
 
 /// LOG_INFO_RSP Payload (Controller → GUI)
-/// Returns Flight Recorder metadata
+/// Returns Flight Recorder metadata including health state
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed)]
 pub struct LogInfoRspPayload {
     pub sd_present: u8,       // 1 if SD card is present
-    pub boot_sector: u32,     // Sector 1000 (boot log)
-    pub log_start: u32,       // First log sector (1001)
-    pub log_end: u32,         // Last log sector (2000)
+    pub sd_health: u8,        // SdHealth enum (0=Ok, 1=Recovered, 2=Reformatted, 3=Missing, 4=Scanned)
+    pub data_start: u32,      // First data sector (100)
+    pub capacity: u32,        // Number of data sectors
     pub current_index: u32,   // Current write index in circular buffer
-    pub total_entries: u32,   // Total heartbeats logged this session
+    pub total_entries: u32,   // Total entries written (may exceed capacity)
 }
 
 impl LogInfoRspPayload {
-    pub fn to_bytes(&self) -> [u8; 21] {
-        let mut buf = [0u8; 21];
+    pub fn to_bytes(&self) -> [u8; 22] {
+        let mut buf = [0u8; 22];
         buf[0] = self.sd_present;
-        buf[1..5].copy_from_slice(&self.boot_sector.to_be_bytes());
-        buf[5..9].copy_from_slice(&self.log_start.to_be_bytes());
-        buf[9..13].copy_from_slice(&self.log_end.to_be_bytes());
-        buf[13..17].copy_from_slice(&self.current_index.to_be_bytes());
-        buf[17..21].copy_from_slice(&self.total_entries.to_be_bytes());
+        buf[1] = self.sd_health;
+        buf[2..6].copy_from_slice(&self.data_start.to_be_bytes());
+        buf[6..10].copy_from_slice(&self.capacity.to_be_bytes());
+        buf[10..14].copy_from_slice(&self.current_index.to_be_bytes());
+        buf[14..18].copy_from_slice(&self.total_entries.to_be_bytes());
         buf
     }
 }
@@ -616,6 +652,7 @@ pub enum ControllerState {
     Running = 1,
     Done = 2,
     Error = 3,
+    Paused = 4,
 }
 
 // =============================================================================
@@ -735,9 +772,11 @@ pub enum PendingVicor {
 
 /// Pending PMBus command
 #[derive(Debug, Clone, Copy)]
-pub struct PendingPmbus {
-    pub addr: u8,
-    pub enable: bool,
+pub enum PendingPmbus {
+    /// Enable/disable a supply by I2C address
+    Enable { addr: u8, enable: bool },
+    /// Set voltage by channel number (1-24), millivolts
+    SetVoltage { channel: u8, voltage_mv: u16 },
 }
 
 /// Pending EEPROM command
@@ -745,6 +784,8 @@ pub struct PendingPmbus {
 pub enum PendingEeprom {
     Read { offset: u8, len: u8 },
     Write { offset: u8, len: u8, data: [u8; 64] },
+    /// Full BIM programming (256 bytes) — validates magic+CRC, writes entire EEPROM
+    WriteBim { data: [u8; 256] },
 }
 
 /// Pending fast pins command
@@ -752,6 +793,24 @@ pub enum PendingEeprom {
 pub enum PendingFastPins {
     Read,
     Write { dout: u32, oen: u32 },
+}
+
+/// Pending board config override command
+#[derive(Debug, Clone, Copy)]
+pub enum PendingBoardConfig {
+    /// Set a runtime override (field_id determines what's being overridden)
+    /// Field IDs:
+    ///   0x01-0x08: Rail N max_voltage_mv (u16)
+    ///   0x11-0x18: Rail N min_voltage_mv (u16)
+    ///   0x21-0x28: Rail N max_current_ma (u16)
+    ///   0x40-0x4F: Voltage cal offset channel N (i16)
+    ///   0x50-0x5F: Current cal offset channel N (i16)
+    ///   0x80: Temperature setpoint (i16, 0.1°C)
+    SetOverride { field_id: u8, value: i16 },
+    /// Clear all overrides (revert to EEPROM defaults)
+    ClearAll,
+    /// Request effective config
+    GetEffective,
 }
 
 /// Error log entry (28 bytes)
@@ -891,9 +950,16 @@ pub struct FbcProtocolHandler {
     pending_analog_read: bool,
     pending_vicor: Option<PendingVicor>,
     pending_pmbus: Option<PendingPmbus>,
+    pending_pmbus_status: bool,
     pending_eeprom: Option<PendingEeprom>,
     pending_fastpins: Option<PendingFastPins>,
     pending_error_log: Option<PendingErrorLog>,
+    pending_board_config: Option<PendingBoardConfig>,
+    // Reset signal (main.rs clears safety_tripped)
+    pending_reset: bool,
+    // SD card maintenance
+    pub pending_sd_format: bool,
+    pub pending_sd_repair: bool,
     // Firmware update state
     fw_update_in_progress: bool,
     fw_update_total_size: u32,
@@ -905,6 +971,23 @@ pub struct FbcProtocolHandler {
     pub pending_fw_begin: Option<PendingFwBegin>,
     pub pending_fw_chunk: Option<PendingFwChunk>,
     pub pending_fw_commit: bool,
+    // DDR slot upload state (main.rs manages DdrSlotTable)
+    pub pending_slot_upload: Option<PendingSlotUpload>,
+    pub pending_slot_status: bool,
+    pub pending_slot_invalidate: Option<u8>,
+    // Test plan state (main.rs manages PlanExecutor)
+    pub pending_set_plan: Option<crate::testplan::TestPlan>,
+    pub pending_run_plan: bool,
+    pub pending_plan_status: bool,
+    pub pending_min_max: bool,
+    pub pending_io_bank: Option<PendingIoBank>,
+}
+
+/// Pending IO bank voltage set
+#[derive(Clone, Copy)]
+pub struct PendingIoBank {
+    pub bank: u8,     // 0=B13, 1=B33, 2=B34, 3=B35
+    pub voltage_mv: u16,
 }
 
 /// Pending firmware update begin request
@@ -919,6 +1002,15 @@ pub struct PendingFwChunk {
     pub offset: u32,
     pub size: u16,
     pub data: [u8; 1024],  // Max chunk size
+}
+
+/// Pending DDR slot upload chunk (main.rs writes to DdrSlotTable)
+pub struct PendingSlotUpload {
+    pub slot_id: u8,
+    pub offset: u32,
+    pub total_size: u32,
+    pub chunk_size: u16,
+    pub data: [u8; 1400],  // Max Ethernet payload minus headers
 }
 
 impl FbcProtocolHandler {
@@ -954,9 +1046,14 @@ impl FbcProtocolHandler {
             pending_analog_read: false,
             pending_vicor: None,
             pending_pmbus: None,
+            pending_pmbus_status: false,
             pending_eeprom: None,
             pending_fastpins: None,
             pending_error_log: None,
+            pending_board_config: None,
+            pending_reset: false,
+            pending_sd_format: false,
+            pending_sd_repair: false,
             fw_update_in_progress: false,
             fw_update_total_size: 0,
             fw_update_expected_checksum: 0,
@@ -966,6 +1063,14 @@ impl FbcProtocolHandler {
             pending_fw_begin: None,
             pending_fw_chunk: None,
             pending_fw_commit: false,
+            pending_slot_upload: None,
+            pending_slot_status: false,
+            pending_slot_invalidate: None,
+            pending_set_plan: None,
+            pending_run_plan: false,
+            pending_plan_status: false,
+            pending_min_max: false,
+            pending_io_bank: None,
         }
     }
 
@@ -1040,6 +1145,13 @@ impl FbcProtocolHandler {
         self.pending_pmbus.take()
     }
 
+    /// Get and clear pending PMBus status request
+    pub fn take_pending_pmbus_status(&mut self) -> bool {
+        let val = self.pending_pmbus_status;
+        self.pending_pmbus_status = false;
+        val
+    }
+
     /// Get and clear pending EEPROM command
     pub fn take_pending_eeprom(&mut self) -> Option<PendingEeprom> {
         self.pending_eeprom.take()
@@ -1053,6 +1165,25 @@ impl FbcProtocolHandler {
     /// Get and clear pending error log request
     pub fn take_pending_error_log(&mut self) -> Option<PendingErrorLog> {
         self.pending_error_log.take()
+    }
+
+    /// Get and clear pending board config command
+    pub fn take_pending_board_config(&mut self) -> Option<PendingBoardConfig> {
+        self.pending_board_config.take()
+    }
+
+    /// Get and clear pending reset (main.rs uses this to clear safety_tripped)
+    pub fn take_pending_reset(&mut self) -> bool {
+        let pending = self.pending_reset;
+        self.pending_reset = false;
+        pending
+    }
+
+    /// Get and clear pending firmware info request
+    pub fn take_pending_fw_info(&mut self) -> bool {
+        let pending = self.pending_fw_info;
+        self.pending_fw_info = false;
+        pending
     }
 
     /// Build ERROR_LOG_RSP packet (called by main.rs after reading error BRAM)
@@ -1086,17 +1217,35 @@ impl FbcProtocolHandler {
         FbcPacket::with_payload(flight_recorder::LOG_READ_RSP, self.next_seq(), &payload)
     }
 
-    /// Build LOG_INFO_RSP packet (called by main.rs)
-    pub fn build_log_info_response(&mut self, sd_present: bool) -> FbcPacket {
+    /// Build LOG_INFO_RSP packet (called by main.rs with FlightRecorder state)
+    pub fn build_log_info_response(
+        &mut self,
+        sd_present: bool,
+        sd_health: u8,
+        data_start: u32,
+        capacity: u32,
+        current_index: u32,
+        total_entries: u32,
+    ) -> FbcPacket {
         let info = LogInfoRspPayload {
             sd_present: if sd_present { 1 } else { 0 },
-            boot_sector: 1000,
-            log_start: 1001,
-            log_end: 2000,
-            current_index: self.log_index,
-            total_entries: self.log_index,  // Simple: index = entries this session
+            sd_health,
+            data_start,
+            capacity,
+            current_index,
+            total_entries,
         };
         FbcPacket::with_payload(flight_recorder::LOG_INFO_RSP, self.next_seq(), &info.to_bytes())
+    }
+
+    /// Build SD_FORMAT_ACK packet (status: 0=OK, 1=error)
+    pub fn build_sd_format_ack(&mut self, status: u8) -> FbcPacket {
+        FbcPacket::with_payload(flight_recorder::SD_FORMAT_ACK, self.next_seq(), &[status])
+    }
+
+    /// Build SD_REPAIR_ACK packet (status + health state)
+    pub fn build_sd_repair_ack(&mut self, status: u8, health: u8) -> FbcPacket {
+        FbcPacket::with_payload(flight_recorder::SD_REPAIR_ACK, self.next_seq(), &[status, health])
     }
 
     /// Build ANALOG_READ_RSP packet (called by main.rs after reading AnalogMonitor)
@@ -1152,7 +1301,7 @@ impl FbcProtocolHandler {
     }
 
     /// Get next sequence number
-    fn next_seq(&mut self) -> u16 {
+    pub fn next_seq(&mut self) -> u16 {
         let s = self.seq;
         self.seq = self.seq.wrapping_add(1);
         s
@@ -1161,6 +1310,11 @@ impl FbcProtocolHandler {
     /// Get current state
     pub fn state(&self) -> ControllerState {
         self.state
+    }
+
+    /// Set state (used by main.rs for plan-driven transitions)
+    pub fn set_state(&mut self, state: ControllerState) {
+        self.state = state;
     }
 
     /// Process incoming FBC packet
@@ -1174,6 +1328,7 @@ impl FbcProtocolHandler {
             // Setup commands
             // Host uses BIM_STATUS_REQ for discovery, expects ANNOUNCE response
             setup::BIM_STATUS_REQ => self.handle_discovery(),
+            setup::WRITE_BIM => self.handle_write_bim(payload),
             setup::CONFIGURE => self.handle_configure(payload),
             setup::UPLOAD_VECTORS => self.handle_upload_vectors(payload),
 
@@ -1182,10 +1337,13 @@ impl FbcProtocolHandler {
             runtime::STOP => self.handle_stop(),
             runtime::RESET => self.handle_reset(),
             runtime::STATUS_REQ => self.handle_status_req(),
+            runtime::MIN_MAX_REQ => { self.pending_min_max = true; None }
 
             // Flight Recorder commands (responses built by main.rs after SD access)
             flight_recorder::LOG_READ_REQ => self.handle_log_read_req(payload),
             flight_recorder::LOG_INFO_REQ => self.handle_log_info_req(),
+            flight_recorder::SD_FORMAT => self.handle_sd_format(),
+            flight_recorder::SD_REPAIR => self.handle_sd_repair(),
 
             // Analog monitoring (responses built by main.rs after reading AnalogMonitor)
             analog::READ_ALL_REQ => self.handle_analog_read_req(),
@@ -1197,15 +1355,31 @@ impl FbcProtocolHandler {
             power::EMERGENCY_STOP => self.handle_emergency_stop(),
             power::POWER_SEQUENCE_ON => self.handle_power_sequence_on(payload),
             power::POWER_SEQUENCE_OFF => self.handle_power_sequence_off(),
+            power::PMBUS_STATUS_REQ => self.handle_pmbus_status_req(),
             power::PMBUS_ENABLE => self.handle_pmbus_enable(payload),
+            power::PMBUS_SET_VOLTAGE => self.handle_pmbus_set_voltage(payload),
+            power::IO_BANK_SET => self.handle_io_bank_set(payload),
 
             // EEPROM commands (responses built by main.rs with BimEeprom)
             eeprom::READ_REQ => self.handle_eeprom_read(payload),
             eeprom::WRITE => self.handle_eeprom_write(payload),
 
+            // Vector engine extended commands
+            vector::STATUS_REQ => self.handle_vector_status_req(),
+            vector::LOAD => self.handle_vector_load(payload),
+            vector::START => self.handle_vector_start(),
+            vector::PAUSE => self.handle_pause(),
+            vector::RESUME => self.handle_resume(),
+            vector::STOP => self.handle_vector_stop(),
+
             // Fast pins (direct FPGA gpio[128:159])
             fastpins::READ_REQ => self.handle_fastpins_read(),
             fastpins::WRITE => self.handle_fastpins_write(payload),
+
+            // Board config overrides (runtime config without touching EEPROM)
+            board_config::SET_OVERRIDE => self.handle_board_config_set(payload),
+            board_config::CLEAR_OVERRIDES => self.handle_board_config_clear(),
+            board_config::GET_EFFECTIVE => self.handle_board_config_get(),
 
             // Error log (read error BRAM contents)
             error_log::ERROR_LOG_REQ => self.handle_error_log_req(payload),
@@ -1216,6 +1390,16 @@ impl FbcProtocolHandler {
             firmware::CHUNK => self.handle_fw_chunk(payload),
             firmware::COMMIT => self.handle_fw_commit(),
             firmware::ABORT => self.handle_fw_abort(),
+
+            // DDR slot commands (persistent vector storage)
+            slot::UPLOAD_TO_SLOT => self.handle_upload_to_slot(payload),
+            slot::SLOT_STATUS_REQ => self.handle_slot_status_req(),
+            slot::INVALIDATE => self.handle_slot_invalidate(payload),
+
+            // Test plan commands (autonomous burn-in)
+            testplan::SET_PLAN => self.handle_set_plan(payload),
+            testplan::RUN_PLAN => self.handle_run_plan(),
+            testplan::PLAN_STATUS_REQ => self.handle_plan_status_req(),
 
             _ => None,  // Unknown command, no response
         }
@@ -1402,8 +1586,27 @@ impl FbcProtocolHandler {
         self.state = ControllerState::Idle;
         self.upload_offset = 0;
         self.upload_total = 0;
+        self.pending_reset = true;  // Signal main.rs to clear safety_tripped
 
         Some(FbcPacket::new(runtime::RESET, self.next_seq()))
+    }
+
+    fn handle_pause(&mut self) -> Option<FbcPacket> {
+        if self.state != ControllerState::Running {
+            return None; // Can only pause when running
+        }
+        self.fbc.disable();
+        self.state = ControllerState::Paused;
+        Some(FbcPacket::new(vector::PAUSE, self.next_seq()))
+    }
+
+    fn handle_resume(&mut self) -> Option<FbcPacket> {
+        if self.state != ControllerState::Paused {
+            return None; // Can only resume when paused
+        }
+        self.fbc.enable();
+        self.state = ControllerState::Running;
+        Some(FbcPacket::new(vector::RESUME, self.next_seq()))
     }
 
     fn handle_status_req(&mut self) -> Option<FbcPacket> {
@@ -1448,6 +1651,41 @@ impl FbcProtocolHandler {
     }
 
     // =========================================================================
+    // Vector Engine Extended Status Handler
+    // =========================================================================
+
+    fn handle_vector_status_req(&mut self) -> Option<FbcPacket> {
+        // Read directly from AXI registers (no deferral needed)
+        let state = self.state as u8;
+        let error_count = self.status.get_error_count();
+        let vector_count = self.status.get_vector_count();
+        let cycle_count = self.status.get_cycle_count();
+        let first_fail = if self.status.first_error_valid() {
+            self.status.get_first_err_vec()
+        } else {
+            0
+        };
+
+        // Build 33-byte response matching host expectation:
+        // [0]: state, [1..5]: current_address (0 for now),
+        // [5..9]: total_vectors, [9..13]: loop_count (0),
+        // [13..17]: target_loops (0), [17..21]: error_count,
+        // [21..25]: first_fail_addr, [25..33]: run_time_ms
+        let mut payload = [0u8; 33];
+        payload[0] = state;
+        // current_address [1..5] = 0 (not tracked at AXI level)
+        payload[5..9].copy_from_slice(&vector_count.to_be_bytes());
+        // loop_count [9..13] = 0 (not tracked at AXI level)
+        // target_loops [13..17] = 0 (not tracked at AXI level)
+        payload[17..21].copy_from_slice(&error_count.to_be_bytes());
+        payload[21..25].copy_from_slice(&first_fail.to_be_bytes());
+        // run_time_ms as cycle_count (approximate — actual time depends on clock freq)
+        payload[25..33].copy_from_slice(&cycle_count.to_be_bytes());
+
+        Some(FbcPacket::with_payload(vector::STATUS_RSP, self.next_seq(), &payload))
+    }
+
+    // =========================================================================
     // Flight Recorder Handlers
     // =========================================================================
 
@@ -1473,6 +1711,16 @@ impl FbcProtocolHandler {
 
         // No immediate response - main.rs builds and sends it
         None
+    }
+
+    fn handle_sd_format(&mut self) -> Option<FbcPacket> {
+        self.pending_sd_format = true;
+        None // main.rs handles SD access
+    }
+
+    fn handle_sd_repair(&mut self) -> Option<FbcPacket> {
+        self.pending_sd_repair = true;
+        None // main.rs handles SD access
     }
 
     // =========================================================================
@@ -1534,15 +1782,96 @@ impl FbcProtocolHandler {
         None
     }
 
+    fn handle_pmbus_status_req(&mut self) -> Option<FbcPacket> {
+        self.pending_pmbus_status = true;
+        None // Response built by main.rs after reading PowerSupplyManager
+    }
+
     fn handle_pmbus_enable(&mut self, payload: &[u8]) -> Option<FbcPacket> {
         if payload.len() < 2 {
             return None;
         }
-        self.pending_pmbus = Some(PendingPmbus {
+        self.pending_pmbus = Some(PendingPmbus::Enable {
             addr: payload[0],
             enable: payload[1] != 0,
         });
         None
+    }
+
+    /// Handle PMBUS_SET_VOLTAGE (0x87) — set PMBus channel voltage
+    ///
+    /// Payload: [channel:u8] [voltage_mv:u16 BE]
+    /// Firmware safety: board_config.check_pmbus_voltage() enforces EEPROM limits.
+    fn handle_pmbus_set_voltage(&mut self, payload: &[u8]) -> Option<FbcPacket> {
+        if payload.len() < 3 {
+            return None;
+        }
+        let channel = payload[0];
+        let voltage_mv = u16::from_be_bytes([payload[1], payload[2]]);
+        self.pending_pmbus = Some(PendingPmbus::SetVoltage {
+            channel,
+            voltage_mv,
+        });
+        None
+    }
+
+    /// Handle IO_BANK_SET — set IO bank voltage via I2C regulator
+    fn handle_io_bank_set(&mut self, payload: &[u8]) -> Option<FbcPacket> {
+        if payload.len() < 3 {
+            return Some(FbcPacket::with_payload(power::IO_BANK_SET_ACK, self.next_seq(), &[1])); // error
+        }
+        let bank = payload[0];
+        if bank > 3 {
+            return Some(FbcPacket::with_payload(power::IO_BANK_SET_ACK, self.next_seq(), &[2])); // invalid bank
+        }
+        let voltage_mv = u16::from_be_bytes([payload[1], payload[2]]);
+        self.pending_io_bank = Some(PendingIoBank { bank, voltage_mv });
+        None // main.rs fulfills with I2C access
+    }
+
+    /// Build PMBUS_STATUS_RSP payload
+    /// Format: [count:u8] then per-supply: [addr:u8][bus:u8][on:u8][vout_mv:u16 BE][iout_ma:i16 BE]
+    pub fn build_pmbus_status_response(&mut self, supplies: &[(u8, u8, bool, u32, i32)]) -> FbcPacket {
+        let mut payload = [0u8; 128]; // Max 16 supplies × 7 bytes + 1
+        let count = supplies.len().min(16) as u8;
+        payload[0] = count;
+        for (i, &(addr, bus, on, vout_mv, iout_ma)) in supplies.iter().enumerate().take(16) {
+            let off = 1 + i * 7;
+            payload[off] = addr;
+            payload[off + 1] = bus;
+            payload[off + 2] = if on { 1 } else { 0 };
+            payload[off + 3..off + 5].copy_from_slice(&(vout_mv as u16).to_be_bytes());
+            payload[off + 5..off + 7].copy_from_slice(&(iout_ma as i16).to_be_bytes());
+        }
+        let len = 1 + count as usize * 7;
+        FbcPacket::with_payload(power::PMBUS_STATUS_RSP, self.next_seq(), &payload[..len])
+    }
+
+    // =========================================================================
+    // Vector LOAD/START/STOP Handlers
+    // =========================================================================
+
+    /// Handle VECTOR_LOAD (0xB2) — load vectors from SD cache
+    /// Currently returns ACK only — actual SD-cached vector loading not yet implemented
+    fn handle_vector_load(&mut self, _payload: &[u8]) -> Option<FbcPacket> {
+        // TODO: Implement SD-cached vector loading
+        // For now, return LOAD_ACK with status=not-implemented
+        let mut payload = [0u8; 2];
+        payload[0] = 0xFF; // status: not implemented
+        payload[1] = 0;
+        Some(FbcPacket::with_payload(vector::LOAD_ACK, self.next_seq(), &payload))
+    }
+
+    /// Handle VECTOR_START (0xB4) — start vector engine
+    /// Delegates to the same logic as runtime::START
+    fn handle_vector_start(&mut self) -> Option<FbcPacket> {
+        self.handle_start()
+    }
+
+    /// Handle VECTOR_STOP (0xB7) — stop vector engine
+    /// Delegates to the same logic as runtime::STOP
+    fn handle_vector_stop(&mut self) -> Option<FbcPacket> {
+        self.handle_stop()
     }
 
     // =========================================================================
@@ -1577,6 +1906,43 @@ impl FbcProtocolHandler {
             data,
         });
         None
+    }
+
+    /// Handle WRITE_BIM (0x20) — full 256-byte BIM EEPROM programming
+    ///
+    /// Payload: 4-byte length (u32 BE, must be 256) + 256 bytes BimEeprom data
+    /// Validates magic (0xBEEFCAFE) and CRC32 before queuing the write.
+    /// Main.rs handles actual I2C write + BoardConfig reload.
+    fn handle_write_bim(&mut self, payload: &[u8]) -> Option<FbcPacket> {
+        // Payload: [len:u32 BE] [data:256 bytes] = 260 bytes
+        if payload.len() < 260 {
+            return None;
+        }
+        let len = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+        if len != 256 {
+            return None;
+        }
+
+        let mut data = [0u8; 256];
+        data.copy_from_slice(&payload[4..260]);
+
+        // Validate magic before accepting
+        let magic = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        if magic != 0xBEEF_CAFE {
+            // Reject — bad magic means corrupted or wrong format
+            return Some(self.build_eeprom_write_ack(false));
+        }
+
+        // Validate CRC32 (bytes 0-247, CRC at bytes 248-251)
+        let computed_crc = crate::hal::eeprom::crc32(&data[..248]);
+        let stored_crc = u32::from_le_bytes([data[248], data[249], data[250], data[251]]);
+        if computed_crc != stored_crc {
+            return Some(self.build_eeprom_write_ack(false));
+        }
+
+        // Queue for main.rs to handle (I2C write + BoardConfig reload)
+        self.pending_eeprom = Some(PendingEeprom::WriteBim { data });
+        None  // Response sent by main.rs after write completes
     }
 
     // =========================================================================
@@ -1748,5 +2114,174 @@ impl FbcProtocolHandler {
     /// Get update progress
     pub fn get_fw_update_progress(&self) -> (u32, u32) {
         (self.fw_update_received, self.fw_update_total_size)
+    }
+
+    // =========================================================================
+    // Board Config Override Handlers
+    // =========================================================================
+
+    /// Handle SET_OVERRIDE command
+    /// Payload: [field_id: u8, value_lo: u8, value_hi: u8] (3 bytes)
+    fn handle_board_config_set(&mut self, payload: &[u8]) -> Option<FbcPacket> {
+        if payload.len() < 3 {
+            return None;
+        }
+        let field_id = payload[0];
+        let value = i16::from_be_bytes([payload[1], payload[2]]);
+        self.pending_board_config = Some(PendingBoardConfig::SetOverride { field_id, value });
+        // ACK immediately
+        Some(FbcPacket::new(board_config::SET_OVERRIDE, self.next_seq()))
+    }
+
+    /// Handle CLEAR_OVERRIDES command
+    fn handle_board_config_clear(&mut self) -> Option<FbcPacket> {
+        self.pending_board_config = Some(PendingBoardConfig::ClearAll);
+        Some(FbcPacket::new(board_config::CLEAR_OVERRIDES, self.next_seq()))
+    }
+
+    /// Handle GET_EFFECTIVE command (response built by main.rs with BoardConfig)
+    fn handle_board_config_get(&mut self) -> Option<FbcPacket> {
+        self.pending_board_config = Some(PendingBoardConfig::GetEffective);
+        None // Response built by main.rs
+    }
+
+    /// Build EFFECTIVE_RSP packet with current effective config
+    pub fn build_effective_config_response(
+        &mut self,
+        rail_limits: &[(u16, u16, u16); 8],  // (max_v, min_v, max_i) per rail
+        voltage_cal: &[i16; 16],
+        current_cal: &[i16; 16],
+        temp_setpoint_dc: i16,
+    ) -> FbcPacket {
+        // Pack: 8 rails × 6 bytes + 16 × 2 + 16 × 2 + 2 = 48 + 32 + 32 + 2 = 114 bytes
+        let mut payload = [0u8; 114];
+        let mut offset = 0;
+
+        // Rail limits (8 × 6 bytes)
+        for (max_v, min_v, max_i) in rail_limits.iter() {
+            payload[offset..offset+2].copy_from_slice(&max_v.to_be_bytes());
+            payload[offset+2..offset+4].copy_from_slice(&min_v.to_be_bytes());
+            payload[offset+4..offset+6].copy_from_slice(&max_i.to_be_bytes());
+            offset += 6;
+        }
+
+        // Voltage cal (16 × 2 bytes)
+        for &cal in voltage_cal.iter() {
+            payload[offset..offset+2].copy_from_slice(&cal.to_be_bytes());
+            offset += 2;
+        }
+
+        // Current cal (16 × 2 bytes)
+        for &cal in current_cal.iter() {
+            payload[offset..offset+2].copy_from_slice(&cal.to_be_bytes());
+            offset += 2;
+        }
+
+        // Temperature setpoint (2 bytes)
+        payload[offset..offset+2].copy_from_slice(&temp_setpoint_dc.to_be_bytes());
+
+        FbcPacket::with_payload(board_config::EFFECTIVE_RSP, self.next_seq(), &payload)
+    }
+
+    // =========================================================================
+    // DDR Slot Handlers
+    // =========================================================================
+
+    /// Handle UPLOAD_TO_SLOT command.
+    /// Payload: [slot_id:u8][offset:u32 BE][total_size:u32 BE][chunk_size:u16 BE][data...]
+    fn handle_upload_to_slot(&mut self, payload: &[u8]) -> Option<FbcPacket> {
+        if payload.len() < 11 {
+            return None;
+        }
+
+        let slot_id = payload[0];
+        let offset = u32::from_be_bytes([payload[1], payload[2], payload[3], payload[4]]);
+        let total_size = u32::from_be_bytes([payload[5], payload[6], payload[7], payload[8]]);
+        let chunk_size = u16::from_be_bytes([payload[9], payload[10]]) as usize;
+
+        if payload.len() < 11 + chunk_size || chunk_size > 1400 {
+            return None;
+        }
+
+        // Store pending upload for main.rs to process via DdrSlotTable
+        let mut data = [0u8; 1400];
+        data[..chunk_size].copy_from_slice(&payload[11..11 + chunk_size]);
+
+        self.pending_slot_upload = Some(PendingSlotUpload {
+            slot_id,
+            offset,
+            total_size,
+            chunk_size: chunk_size as u16,
+            data,
+        });
+
+        // ACK with slot_id + offset for flow control
+        let mut ack = [0u8; 5];
+        ack[0] = slot_id;
+        ack[1..5].copy_from_slice(&(offset + chunk_size as u32).to_be_bytes());
+        Some(FbcPacket::with_payload(slot::UPLOAD_TO_SLOT, self.next_seq(), &ack))
+    }
+
+    /// Handle SLOT_STATUS_REQ
+    fn handle_slot_status_req(&mut self) -> Option<FbcPacket> {
+        self.pending_slot_status = true;
+        None // main.rs builds response via DdrSlotTable::serialize_status()
+    }
+
+    /// Handle INVALIDATE command. Payload: [slot_id:u8] (0xFF = all)
+    fn handle_slot_invalidate(&mut self, payload: &[u8]) -> Option<FbcPacket> {
+        if payload.is_empty() {
+            return None;
+        }
+        self.pending_slot_invalidate = Some(payload[0]);
+        Some(FbcPacket::new(slot::INVALIDATE, self.next_seq()))
+    }
+
+    // =========================================================================
+    // Test Plan Handlers
+    // =========================================================================
+
+    /// Handle SET_PLAN command. Payload: TestPlan serialization.
+    fn handle_set_plan(&mut self, payload: &[u8]) -> Option<FbcPacket> {
+        match crate::testplan::TestPlan::from_payload(payload) {
+            Some(plan) => {
+                self.pending_set_plan = Some(plan);
+                Some(FbcPacket::new(testplan::SET_PLAN_ACK, self.next_seq()))
+            }
+            None => None,
+        }
+    }
+
+    /// Handle RUN_PLAN command.
+    fn handle_run_plan(&mut self) -> Option<FbcPacket> {
+        self.pending_run_plan = true;
+        Some(FbcPacket::new(testplan::RUN_PLAN_ACK, self.next_seq()))
+    }
+
+    /// Handle PLAN_STATUS_REQ.
+    fn handle_plan_status_req(&mut self) -> Option<FbcPacket> {
+        self.pending_plan_status = true;
+        None // main.rs builds response via PlanExecutor::serialize_status()
+    }
+
+    /// Build SLOT_STATUS_RSP (called by main.rs)
+    pub fn build_slot_status_response(&mut self, status_data: &[u8]) -> FbcPacket {
+        FbcPacket::with_payload(slot::SLOT_STATUS_RSP, self.next_seq(), status_data)
+    }
+
+    /// Build PLAN_STATUS_RSP (called by main.rs)
+    pub fn build_plan_status_response(&mut self, status_data: &[u8]) -> FbcPacket {
+        FbcPacket::with_payload(testplan::PLAN_STATUS_RSP, self.next_seq(), status_data)
+    }
+
+    /// Build STEP_RESULT notification (called by main.rs after each step)
+    pub fn build_step_result(&mut self, result: &crate::testplan::StepResult) -> FbcPacket {
+        let mut payload = [0u8; 14];
+        payload[0] = result.step_index;
+        payload[1] = result.status;
+        payload[2..6].copy_from_slice(&result.total_errors.to_be_bytes());
+        payload[6..10].copy_from_slice(&result.loops_completed.to_be_bytes());
+        payload[10..14].copy_from_slice(&result.elapsed_secs.to_be_bytes());
+        FbcPacket::with_payload(testplan::STEP_RESULT, self.next_seq(), &payload)
     }
 }

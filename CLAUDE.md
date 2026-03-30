@@ -7,12 +7,62 @@ Ground truth from code-level audit (March 2026). Every claim verified by reading
 ## What This Is
 
 Burn-in test system for semiconductor chips. ~44 Zynq 7020 FPGA boards per system.
-Replaces the 2016 Sonoma/kzhang_v2 Linux system with:
-- **Bare-metal Rust firmware** (no OS, <1s boot)
-- **Custom FPGA toolchain** (ONETWO-derived, no Vivado)
-- **Optimized RTL** (first-principles design, not legacy port)
+**One GUI, profile-switched, controlling 5 tester system types.** Replaces three legacy Sonoma apps:
+
+| Legacy App | What It Did | Our Replacement |
+|------------|-------------|-----------------|
+| **Unity** (Editor) | .tpf XML editor, .bim editor, PIN_MAP, .map/.lvl/.tim, PowerOn/Off | DeviceConfigPanel + PatternConverterPanel + dc_gen.c (generates all 7 file types) |
+| **Everest** (Server) | NFS server, TCP :3000, .tpf→.tp conversion, RunVectors, ReadAnalog, multi-board orchestration, datalog CSV | CLI orchestrator (in progress), host crate (FBC + Sonoma clients) |
+| **Bench App** (Manual) | SSH terminal, power control, pin debugging, vector load/run, ADC monitoring, EEPROM | CLI commands (33 FBC + 23 Sonoma, all verified on hardware) |
+
+FBC is an **optimized Sonoma** (bare-metal Rust, raw Ethernet, compressed .fbc vectors) BUT also
+the **Universal GUI/EDA** — profile-switched to support Sonoma, HX, XP-160/Shasta, and MCC systems.
+Same GUI, different transport + file format per system, all feeding LRM v2 database.
 
 **Owner:** Isaac Nudeton / ISE Labs
+
+**LRM v2 exists as a SEPARATE project** at `C:\Dev\projects\Lab-Resource-Manager-v2-Isaac-\` —
+full C server on port 8080, 104 REST routes, 21 tables, custom B-tree+WAL storage (33.7 MB db).
+The `c-engine/lrm_*.c` files in THIS repo are FFI stubs, NOT the database itself.
+Integration (FBC GUI → LRM API) is pending, but the server is built.
+
+### Device Package Structure (Same Across ALL Systems)
+
+Every customer device (Cisco C512, Microsoft Normandy, etc.) produces this file set:
+
+| File | Format | Generator | Purpose |
+|------|--------|-----------|---------|
+| `PIN_MAP` | `"GPIO_IDX SIGNAL_NAME\n"` | `dc_gen_pinmap()` | 128/160 pin→signal mapping |
+| `{device}.map` | `"SIGNAL = BANK_GPIO# ; DIR\n"` | `dc_gen_map()` | Signal→bank assignment |
+| `{device}.lvl` | `"BANK <name> VOLTAGE=X.XXX\n"` | `dc_gen_lvl()` | Bank voltages + CMOS levels (70/30 rule) |
+| `{device}.tim` | `"PERIOD=X DRIVE_OFF=X COMPARE=X\n"` | `dc_gen_tim()` | Timing parameters |
+| `{device}.tp` | `"STEP PATTERN PATTERN_FILE LOOPS\n"` | `dc_gen_tp()` | Test plan steps (Sonoma) |
+| `plan.json` | TestPlanDef JSON | `dc_gen_plan_json()` | FBC test plan (pattern_id, temp, clock, fail_action per step) |
+| `PowerOn.sh` | Bash (MIO enable + DAC set) | `dc_gen_power_on()` | Sorted by sequence_order, DAC=(V/2.5)*4095 |
+| `PowerOff.sh` | Bash (reverse of PowerOn) | `dc_gen_power_off()` | Reverse order shutdown |
+| `{device}.bim` | 256-byte EEPROM XML | Manual / editor | Board Interface Module config |
+| `{device}.tpf` | XML v5.0 test plan | Unity (legacy) / our editor | Full test plan (see .tpf schema below) |
+| `vectors/*.hex` | 40B/vector binary | `gen_hex.c` | Legacy Sonoma vectors |
+| `vectors/*.fbc` | Compressed binary | `gen_fbc.c` | FBC optimized vectors |
+
+### .tpf XML Test Plan Schema (Production Format)
+
+The `.tpf` is the master test plan file. Unity creates/edits it, Everest converts it to `.tp` for execution.
+Our TestPlanEditor (784 lines) outputs JSON — `.tpf` XML parsing is a gap we need to close.
+
+| Section | Contains | Editor Needs |
+|---------|----------|-------------|
+| `<TimeControl>` | Burn-in duration (D:H:M:S), ADC sample period | Time picker |
+| `<ThermalControl>` | Sensor type (Case_30K NTC / Linear diode), sensor pin | Dropdown |
+| `<BimType>` | .bim file path, device name, type ID | File picker |
+| `<Power>` | Named supply list (16+ entries) | Supply table |
+| `<Global><References>` | IO bank voltages (4 banks) | 4 voltage inputs |
+| `<Global><ADC>` | Monitoring pins: name, type, min/max shutdown, formula | Table editor |
+| `<Global><Power>` | Per-supply V+I limits, autoadj flag, scale formula | Table editor |
+| `<TestSteps>` | Ordered steps, each with temp/vectors/power/timing | Step list |
+
+Each `<TestStep>` has: Temperature (setpoint, UL, LL, ramp), Duration (repeats, freq, option code),
+PinStimuli (PULSE/NPULSE/INPUT edge timing), Pattern (.hex file list), Sequencing (supply ramps).
 
 ---
 
@@ -23,7 +73,7 @@ Replaces the 2016 Sonoma/kzhang_v2 Linux system with:
 |------|---------|
 | VICOR | 6 high-current core power supplies |
 | LCPS | Low Current Power Supply (PMBus) |
-| BIM | Board Interface Module — EEPROM on interposer identifies board type |
+| BIM | Board Interface Module — separate board (e.g. calibration BIM = blue board) with EEPROM, NTC, FETs, interposer. Connects to controller board (green/Zynq) via J3/J4/J5 |
 | DUT | Device Under Test (the chip being burned in) |
 | Fast Pins | gpio[128:159], direct FPGA I/O, 1-cycle latency |
 | BIM Pins | gpio[0:127], through interposer, 2-cycle latency |
@@ -37,9 +87,12 @@ Replaces the 2016 Sonoma/kzhang_v2 Linux system with:
 | FBC instruction set | `rtl/fbc_pkg.vh` | Defines all opcodes, widths, parameters |
 | Instruction execution | `rtl/fbc_decoder.v` | State machine that runs FBC bytecode |
 | FPGA integration | `rtl/system_top.v` | Zynq PS7 + all AXI peripherals |
-| Protocol wire format | `firmware/src/fbc_protocol.rs` | 28 commands, 8 subsystems, all payload structs (was protocol.rs, deleted) |
+| Protocol wire format | `firmware/src/fbc_protocol.rs` | 79 commands, 13 subsystems, all payload structs |
 | Register access | `firmware/src/regs.rs` | All FPGA register offsets (verified vs RTL) |
-| Main firmware loop | `firmware/src/main.rs` | Boot, networking, command dispatch |
+| Device DNA / MAC | `rtl/axi_device_dna.v` + `firmware/src/hal/dna.rs` | Silicon ID → unique MAC per board |
+| Main firmware loop | `firmware/src/main.rs` | Boot, networking, command dispatch, slot/plan integration |
+| SD + DDR double-buffer | `firmware/src/ddr_slots.rs` | SD pattern library (256 max) + DDR double-buffer (A/B regions), BIM serial invalidation |
+| Test plan executor | `firmware/src/testplan.rs` | Autonomous burn-in state machine, checkpoint persistence |
 | GUI protocol client | `gui/src-tauri/src/fbc.rs` | Socket, types, constants |
 | GUI state machine | `gui/src-tauri/src/state.rs` | All command send/recv, payload parsing |
 | JTAG programmer | `C:\Dev\xyzt_pico_Hardware\fpga_jtag.py` | Multi-device JTAG, programs PL via FT232H |
@@ -71,23 +124,227 @@ byte-compatible: ZERO(1B) / ONES(1B) / RUN(1+4B) / SPARSE(1+1+NB, crossover=15) 
 CRC32 over header+pin_config+data (IEEE 802.3). Tauri command `pc_convert` accepts `fbc_output`
 parameter. Frontend has `.fbc OUT` file picker in Pattern Conversion tab.
 
-### Pin Import Feature (March 2026)
+### Smart Parsers — Automatic Inference (No Manual JSON Required)
 
-**Solved:** Engineers can now import pin tables directly from datasheets without writing device JSON manually.
+**STIL Smart Parser** (`parse_stil_smart.c`) — 3-phase inference:
+1. Parse Signals → infer pin types from names:
+   - `_TCK`, `_CLK` → PULSE_POS (clock)
+   - `_TDO`, `_DOUT` → MONITOR (output sense)
+   - `_TDI`, `_TMS`, `_EN`, `_CS` → IO (bidirectional)
+2. Parse SignalGroups → link signals: `"JTAG_GROUP = 'TCK + TMS + TDI + TDO'"` → all tagged "JTAG"
+3. Parse Timing → extract clock period from waveform patterns
+
+**AVC Smart Parser** (`parse_avc_smart.c`) — behavioral inference:
+- Temperature from timing set: `tp1`→100°C, `tp2`→125°C, `tp3`→150°C, `room`→25°C, `cold`→-40°C
+- Test type from timing set: `burn`→burn-in, `func`→functional, `scan`→scan, `atpg`→ATPG
+- Pin behavior from vector patterns: clock if 'C'>10%, monitor if 'L'/'H'>50%, else IO
+- Pattern name auto-generated: `"AVC_tset_gen_tp1_T100C"`
+
+**Pin Map Parser** (`parse_pinmap.c`) — 3 formats auto-detected:
+1. Board PIN (Sonoma): `B13_GPIO0 PAD_A_RSTN;` → channel from GPIO index
+2. Direct GPIO: `0 signal_name` → channel from first token
+3. burnIn.cfg (VelocityCAE): `PINLIST...END PINLIST` 6-column format with ATE_PINNAME + CHANNEL
+
+### Device File Generation — 7 Output Types (`dc_gen.c`)
+
+`dc_gen.c` is **profile-agnostic** — works with ANY system profile (Sonoma, HX, MCC, etc.).
+Level derivation: VIH=Vbank×0.7, VIL=Vbank×0.3, VOH=Vbank×0.8, VOL=Vbank×0.2 (CMOS 70/30).
+Power scripts: insertion-sort by `sequence_order`, DAC mapping = `(voltage / 2.5) * 4095`.
+
+### Pin Import — CSV/Excel/PDF Extraction + Cross-Verification
+
+**Solved:** Engineers import pin tables from datasheets, edit inline, verify against a second source.
 
 | Source | Input | Output | Status |
 |--------|-------|--------|--------|
 | CSV/Excel/PDF → Pin Table | .csv/.xlsx/.pdf | Editable pin table + device JSON | ✅ Complete |
-| Pin Table → Device Config | Extracted pins | PIN_MAP + .map + .lvl + .tim + .tp | ✅ Complete |
+| Pin Table → Device Config | Extracted pins | PIN_MAP + .map + .lvl + .tim + .tp + PowerOn/Off.sh | ✅ Complete |
 | Cross-Verification | 2x pin tables | Mismatch report (channel/voltage/direction) | ✅ Complete |
 
-**Files:**
-- Rust: `gui/src-tauri/src/pattern_converter/pin_extractor.rs` (CSV/Excel/PDF extraction)
-- Commands: `extract_pin_table`, `verify_pin_tables`, `generate_from_extracted`
-- Frontend: PatternConverterPanel.tsx → Pin Import tab (editable tables, format badges, mismatch highlighting)
-- Dependencies: calamine (Excel), pdf-extract (PDF), csv (CSV)
+**CSV extraction** (`pin_extractor.rs` + `dc_csv.c`):
+- Auto-detect delimiter: tabs > semicolons > commas (ignoring quoted fields)
+- Auto-detect header row: scan first 10 rows for ≥2 recognized column names
+- Recognized columns: signal/pin_name/net, channel/gpio/pin#, direction/dir/io, voltage/vio/level, group/bank/domain
+- Supply detection: signal contains "CORE"/"VDD"/"VOUT"/"VCC"/"SUPPLY" → treated as power supply row
+- Fallback: positional (col0=signal, col1=channel, col2=dir, col3=voltage) if no header found
 
-**Workflow:** Select source file → Extract → Edit inline → (optional) Verify against secondary source → Generate All
+**Excel extraction**: calamine crate → same column detection as CSV (shared `parse_string_rows_into_table()`)
+
+**PDF extraction** (two strategies):
+1. **Tabular** (datasheets): Find header line with Pin/Signal/Channel keywords, parse fixed-width rows
+2. **Scattered** (schematics): Pattern-match `"Pin N SIGNAL"` pairs scattered in drawing text.
+   Works because PCB tools (Altium/Eagle/KiCad) embed text as real PDF text, not raster. Fuzzier — more
+   warnings, more user editing expected.
+
+**Cross-verification** (`cross_verify()`):
+- Primary source = ground truth, secondary = validation
+- Match by signal name (case-insensitive)
+- Report: channel mismatch, direction mismatch, voltage mismatch (tolerance: |v1-v2| > 0.01V)
+- Report: signals in secondary but missing from primary
+- Result: `VerificationResult { mismatches, match_count, mismatch_count }`
+
+**Full pipeline:**
+```
+Source file (CSV/Excel/PDF) → extract_pin_table() [Rust]
+    → ExtractedPinTable (editable in frontend)
+    → (optional) cross_verify() against secondary source (schematic PDF, second CSV)
+    → to_device_json() → temp device.json
+    → dc_parse_device() [C] → DcDeviceIR
+    → dc_gen_all() [C] → 7 device files (PIN_MAP, .map, .lvl, .tim, .tp, PowerOn.sh, PowerOff.sh)
+```
+
+**Files:**
+- Rust: `gui/src-tauri/src/pattern_converter/pin_extractor.rs`
+- C: `dc_csv.c` (CSV parsing), `dc_gen.c` (file generation), `dc_json.c` (device JSON parsing)
+- Commands: `extract_pin_table`, `verify_pin_tables`, `generate_from_extracted`
+- Dependencies: calamine (Excel), pdf-extract (PDF), csv (Rust CSV)
+
+### C Engine API Surface (`c-engine/pc/`)
+
+The C pattern converter is a **zero-dependency C11 library** compiled into the Tauri binary via `build.rs` (cc crate).
+All headers: `pc.h` (pattern conversion) + `dc.h` (device config generation).
+
+**Build:** `build.rs` compiles these C sources into `libpattern_converter.a`:
+```
+ir.c, crc32.c, parse_atp.c, parse_pinmap.c, parse_stil_smart.c, parse_avc_smart.c,
+gen_hex.c, gen_seq.c, gen_fbc.c, dc_json.c, dc_gen.c, dc_csv.c,
+dll_api.c, dc_api.c, vendor/cJSON.c
+```
+
+**Core IR (ir.c):**
+```c
+void pc_pattern_init(PcPattern *p, const char *name);
+void pc_pattern_free(PcPattern *p);
+int  pc_pattern_add_signal(PcPattern *p, const char *name);
+int  pc_pattern_add_vector(PcPattern *p, const PcVector *v);
+PinState pc_char_to_state(char c);        // '0'→PS_DRIVE_0, 'H'→PS_EXPECT_H, etc.
+char     pc_state_to_char(PinState s);
+void pc_encode_vector(const PcVector *v, PcHexVector *out);  // → 40-byte hex format
+```
+
+**Parsers:**
+```c
+int pc_parse_atp(PcPattern *p, const char *path);            // ATP format
+int pc_parse_stil_smart(PcPattern *p, const char *path);     // STIL (infers pin types, groups, timing)
+int pc_parse_avc_smart(PcPattern *p, const char *path);      // AVC (infers test type, temperature)
+int pc_load_pinmap(PcPattern *p, const char *path);          // Signal→channel mapping
+void pc_apply_identity_map(PcPattern *p);                    // Signal index N → channel N
+```
+
+**Generators:**
+```c
+int pc_gen_hex(const PcPattern *p, const char *path, int append_crc);        // → .hex (40B/vector)
+int pc_gen_seq(const PcPattern *p, const char *path, const char *atp_name);  // → .seq text
+int pc_gen_fbc(const PcPattern *p, const char *path, uint32_t vec_clock_hz); // → .fbc compressed
+```
+
+**DLL API (dll_api.c) — handle-based, FFI-safe:**
+Static pool of 16 `PcPattern` slots. Integer handles. No structs cross boundary.
+```c
+PC_API int         pc_create(void);                                    // → handle (0-15)
+PC_API void        pc_destroy(int h);
+PC_API int         pc_dll_load_pinmap(int h, const char *path);
+PC_API int         pc_dll_load_input(int h, const char *path, int format);  // FMT_AUTO/ATP/STIL/AVC
+PC_API int         pc_dll_convert(int h, const char *hex_path, const char *seq_path);
+PC_API int         pc_dll_gen_fbc(int h, const char *fbc_path, uint32_t vec_clock_hz);
+PC_API int         pc_dll_num_signals(int h);
+PC_API int         pc_dll_num_vectors(int h);
+PC_API const char *pc_dll_last_error(int h);
+PC_API const char *pc_dll_version(void);
+```
+
+**Device Config API (dc_api.c) — same handle pattern:**
+Static pool of 16 `DcHandle` slots. Generates device config files from JSON.
+```c
+PC_API int         dc_create(void);                                    // → handle (0-15)
+PC_API void        dc_destroy(int h);
+PC_API int         dc_load_profile(int h, const char *path_or_name);   // built-in name OR file path
+PC_API int         dc_load_device(int h, const char *path);            // device config JSON file path
+PC_API int         dc_validate(int h);                                 // check constraints
+PC_API int         dc_generate(int h, const char *out_dir);            // all files at once
+PC_API int         dc_gen_file(int h, const char *output_dir, int file_type);  // single file (DC_FILE_PINMAP=0, etc.)
+PC_API int         dc_num_channels(int h);                             // channel count from profile
+PC_API int         dc_num_supplies(int h);                             // supply count from profile
+PC_API int         dc_num_steps(int h);                                // test step count from device
+PC_API const char *dc_profile_name(int h);                             // loaded profile name
+PC_API const char *dc_last_error(int h);
+// NOT in DLL API: dc_load_csv (internal only via dc_parse_csv in dc_csv.c)
+// NOT in DLL API: dc_get_builtin_profile(name) — returns const char* JSON, internal use
+```
+
+**Return codes:** `PC_OK(0)`, `PC_ERR_FILE(-1)`, `PC_ERR_PARSE(-2)`, `PC_ERR_ALLOC(-3)`,
+`PC_ERR_PINMAP(-4)`, `PC_ERR_HANDLE(-5)`, `PC_ERR_FORMAT(-6)`, `PC_ERR_WRITE(-7)`.
+
+### Rust FFI Layer (`src/pattern_converter/pc_ffi.rs`)
+
+Wraps the C DLL API in safe Rust. `PcHandle` struct with RAII (calls `pc_destroy` on drop).
+```rust
+pub struct PcHandle { handle: i32 }
+impl PcHandle {
+    pub fn new() -> Result<Self, String>;
+    pub fn load_input(&self, path: &str, format: Option<&str>) -> Result<(), String>;
+    pub fn load_pinmap(&self, path: &str) -> Result<(), String>;
+    pub fn convert(&self, hex_path: &str, seq_path: &str) -> Result<(), String>;
+    pub fn gen_fbc(&self, fbc_path: &str, vec_clock_hz: u32) -> Result<(), String>;
+    pub fn num_signals(&self) -> i32;
+    pub fn num_vectors(&self) -> i32;
+}
+```
+
+### Pattern Converter Tauri Commands
+
+| Command | Parameters | Output |
+|---------|-----------|--------|
+| `pc_convert` | `input_path, pinmap_path?, hex_output?, seq_output?, fbc_output?, format?, vec_clock_hz?` | `{signals, vectors, hex_path?, seq_path?, fbc_path?}` |
+| `dc_generate_config` | `device_json, profile, output_dir` | generation result |
+| `dc_generate_file` | `device_json, profile, file_type, output_path` | single file result |
+| `dc_generate_from_csv` | `csv_path, profile, output_dir` | generation result |
+| `extract_pin_table` | `file_path` | `ExtractedPinTable` (signals, supplies, warnings) |
+| `verify_pin_tables` | `primary_path, secondary_path` | `VerificationResult` (mismatches) |
+| `generate_from_extracted` | `data: ExtractedPinTable, profile, output_dir` | generation result |
+
+### .fbc Binary Format Reference
+
+```
+HEADER (32 bytes):
+  [0:4]   magic        = 0x00434246 ("FBC\0", LE)
+  [4:6]   version      = 1
+  [6]     pin_count    = 160
+  [7]     flags        = bit 0: has thermal profile (FBC_FLAG_THERMAL_PROFILE = 0x01)
+  [8:12]  num_vectors  = total uncompressed vector count
+  [12:16] compressed_size = bytes of compressed data (includes thermal profile after OP_END)
+  [16:20] vec_clock_hz = vector clock frequency
+  [20:24] crc32        = IEEE 802.3 CRC over header+pin_config+data (this field=0 during calc)
+  [24:28] _reserved[0:4] = thermal segment count (u32 LE) if flags & 0x01, else 0
+  [28:32] _reserved[4:8] = 0
+
+PIN_CONFIG (80 bytes):
+  160 pins × 4 bits = 640 bits = 80 bytes
+  Pin types: 0=BIDI, 1=PULSE_POS, 2=PULSE_NEG, 3=MONITOR, 4=SUPPLY
+
+COMPRESSED DATA (variable):
+  OP_VECTOR_FULL   0x01  1+20B  (20-byte raw vector)
+  OP_VECTOR_SPARSE 0x02  1+1+NB (count + changed bytes, crossover at N=15)
+  OP_VECTOR_RUN    0x03  1+4B   (repeat count, LE u32)
+  OP_VECTOR_ZERO   0x04  1B     (all-zero vector)
+  OP_VECTOR_ONES   0x05  1B     (all-ones vector)
+  OP_VECTOR_XOR    0x06  1+20B  (XOR with previous vector — defined, not yet emitted by encoder)
+  OP_END           0x07  1B     (stream terminator)
+
+THERMAL_PROFILE (after OP_END, if flags & 0x01):
+  N × 8 bytes, where N = _reserved[0:4]:
+    [0:4]  vector_offset    (u32 LE — starting vector index)
+    [4]    avg_toggle_rate  (0-160)
+    [5]    avg_active_pins  (0-160)
+    [6]    power_level      (0=Low, 1=Medium, 2=High)
+    [7]    reserved         (0)
+  Segments every 1024 vectors. Generated during compression (XOR + popcount, zero extra cost).
+  Firmware loads at .fbc load time → feedforward thermal schedule before first vector fires.
+```
+
+Compression ratio: 4.8x (random data) to 710x (uniform vectors). Byte-compatible between
+C compiler (`gen_fbc.c`) and Rust compiler (`compiler.rs`). CRC32 uses same polynomial as `crc32.c`.
+Thermal profiling: both compilers emit identical segment data (25/25 tests pass).
 
 ---
 
@@ -121,9 +378,10 @@ typedef struct {
 } DcTesterProfile;
 ```
 - Built-in profiles embedded as JSON strings in `dc_json.c`
-- Currently: **only Sonoma built in** — HX, XP-160/Shasta, MCC profiles need adding
+- **Sonoma**: fully implemented (banks, supplies, firmware paths, timing)
+- **HX, XP-160/Shasta, MCC**: structural stubs (channels, banks, supplies, timing present; `firmware_path` and `vector_dir` empty — need transport-specific settings)
 - Lookup: `dc_get_builtin_profile("sonoma")` → returns JSON, parsed into struct
-- See `PROFILE-INSTRUCTIONS.md` for exact code to add remaining profiles
+- See `PROFILE-INSTRUCTIONS.md` for completing HX/XP-160/MCC profiles
 
 ### Layer 3: Host CLI Transport (host/src/bin/cli.rs)
 ```rust
@@ -141,21 +399,53 @@ enum Commands {
 
 | System | Channels | Axes | Supplies | Timing | Thermal | Transport |
 |--------|----------|------|----------|--------|---------|-----------|
-| **Sonoma** | 128 | 1 | 6 VICOR | 100ps/200MHz | Watlow 4-zone | SSH (Linux) |
+| **Sonoma** | 128 | 1 | 6 VICOR | 100ps/200MHz | ARM PID → BIM FETs (no external Watlow) | SSH (Linux) |
 | **HX** | 160/axis | 4 | 16 RMA5608 | 200ps/200MHz | RMA5608 4-zone | INSPIRE |
 | **XP-160/Shasta** | 160/axis | 8 | 32 RMA5608 | 200ps/200MHz | RMA5608 8-zone | INSPIRE |
 | **MCC** | 128 | 1 | 8 | 1ns/50MHz | Watlow 1-zone | Modbus TCP |
-| **FBC** (future) | 160 | 1 | 6 VICOR | 100ps/200MHz | Watlow 4-zone | Raw Ethernet |
+| **FBC** (future) | 160 | 1 | 6 VICOR | 100ps/200MHz | ARM crystallization v2 → BIM FETs | Raw Ethernet |
 
 HX and XP-160/Shasta use **the same driver** — Shasta is just newer. Only difference = axis count.
 Per-axis layout identical: 96 drive + 60 monitor + 4 reserved = 160 channels.
+
+### Transport Details Per System
+
+**Sonoma (IMPLEMENTED):** SSH + ELF binaries on Linux Zynq.
+- `SonomaClient` in `host/src/sonoma.rs` — 34 pub methods via SSH
+- ELF tools: `RunSuperVector.elf`, `linux_run_vector.elf`, `linux_load_vectors.elf`,
+  `linux_IO_PS.elf`, `linux_VICOR.elf`, `linux_pmbus_PicoDlynx.elf`
+- NFS serves device packages to boards, TCP :3000 for orchestration
+- Vector execution: `.seq` + `.hex` loaded via `linux_load_vectors.elf`, run via `RunSuperVector.elf`
+
+**FBC (IMPLEMENTED):** Raw Ethernet 0x88B5, bare-metal ARM firmware.
+- `FbcClient` in `host/src/lib.rs` — 47 pub methods (44 protocol + 3 utility), all tested on hardware
+- Direct AXI register access, DMA vector upload, compressed .fbc format
+- No OS, no SSH, no NFS — everything over single Ethernet frame protocol
+
+**HX / XP-160/Shasta (NOT IMPLEMENTED — enum + specs only):**
+- Transport: INSPIRE (Aehr/Incal proprietary protocol)
+- Software: INSPIRE v4.9 (HX) / INSPIRE XP8 v1.3.16 (XP-160)
+- Pattern tool: `PatConvert.exe` (converts STIL/AVC/APS → INSPIRE format)
+- Power train: RMA5608 (provides both power distribution AND thermal zones)
+- Script syntax: `POWER.SET [rail], [voltage], [current_max]` with semicolon comments
+- Vector formats: STIL, AVC, APS (ISE Pattern Editor ASCII)
+- Pattern memory: 650K vectors per axis
+- Connectors: RMA5608 Power Train (160-pin) + XPS-4/XPS-8 Data (160-pin)
+- **What we'd need:** Reverse-engineer INSPIRE wire protocol, or get Aehr SDK docs
+
+**MCC (NOT IMPLEMENTED — enum + specs only):**
+- Transport: Modbus TCP (standard industrial protocol — straightforward to implement)
+- Thermal: Watlow controller via Modbus TCP/IP (1 zone, -40°C to 150°C, 5°C/min ramp) — NOTE: MCC may actually use an external Watlow unlike Sonoma
+- Unique features: 16 pattern zones, PLC integration, DB2 backend
+- Timing: 1ns resolution / 50MHz max (5x coarser than HX/Sonoma)
+- **What we'd need:** Modbus register map for Watlow + MCC controller command set
 
 ### What's Complete vs Missing
 
 | Layer | Sonoma | HX | XP-160/Shasta | MCC | FBC |
 |-------|--------|----|---------------|-----|-----|
 | LRM SystemType enum | ✅ | ✅ | ✅ | ✅ | ❌ (add SYS_FBC=5) |
-| C Engine profile (dc_json.c) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| C Engine profile (dc_json.c) | ✅ | ⚠️ stub | ⚠️ stub | ⚠️ stub | ❌ |
 | GUI dropdown | ✅ | ❌ | ❌ | ❌ | ❌ |
 | Host transport | ✅ SSH | ❌ | ❌ | ❌ | ✅ Raw Ethernet |
 | Pattern converter output | ✅ .hex/.seq/.fbc | ❌ | ❌ | ❌ | ✅ .fbc |
@@ -190,19 +480,21 @@ Per-axis layout identical: 96 drive + 60 monitor + 4 reserved = 160 channels.
 │   └── (13 more)          # io_cell, clk_gen, error_bram, etc.
 ├── tb/                    # Testbenches
 ├── constraints/           # Pin constraints (.xdc)
-├── firmware/              # ARM Cortex-A9 bare-metal Rust (27 source files)
+├── firmware/              # ARM Cortex-A9 bare-metal Rust (30 source files)
 │   └── src/
 │       ├── main.rs        # Entry, boot, main loop
-│       ├── fbc_protocol.rs # 28 commands, all payloads
+│       ├── fbc_protocol.rs # 79 commands across 13 subsystems
 │       ├── regs.rs        # FPGA register access
-│       ├── dma.rs         # AXI DMA + FbcStreamer
+│       ├── dma.rs         # AXI DMA + FbcStreamer + stream_from_ddr()
+│       ├── ddr_slots.rs   # SD pattern library + DDR double-buffer (A/B regions)
+│       ├── testplan.rs    # Autonomous burn-in state machine (PlanExecutor)
 │       ├── analog.rs      # 32-ch ADC (XADC + MAX11131)
 │       ├── net.rs         # Zynq GEM Ethernet driver
 │       └── hal/           # 16 hardware drivers
 ├── gui/                   # Tauri + React + Three.js
 │   ├── src/               # React frontend
 │   └── src-tauri/         # Rust backend
-├── host/                  # CLI for multi-board control (discover + ping only)
+├── host/                  # CLI + shared library (33 FBC + 23 Sonoma commands)
 ├── reference/             # Old 2016 kzhang_v2 design (READ ONLY reference)
 ├── docs/                  # Architecture analysis docs
 ├── fsbl/                  # First Stage Boot Loader
@@ -216,10 +508,16 @@ Per-axis layout identical: 96 drive + 60 monitor + 4 reserved = 160 channels.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **PL (FPGA)** | ✅ **PROGRAMMED** | Bitstream loaded via JTAG, all AXI peripherals accessible |
-| **PS (ARM Firmware)** | ✅ **RUNNING** | First Light achieved March 2026 — CPU @ 667MHz, DDR @ 533MHz, ANNOUNCE packet sent |
-| **VICOR GPIO** | ✅ FIXED | SLCR MIO mux configured in `main.rs:61-78` |
+| **PL (FPGA)** | ✅ **REBUILT March 25** | Full timing closure WNS=+0.018ns. All 8 AXI peripherals including `axi_device_dna.v`. Deployed via JTAG. |
+| **PS (ARM Firmware)** | ✅ **DEPLOYED March 25** | All fixes compiled (0 warnings, 36 tests), deployed via JTAG, verified on hardware |
+| **VICOR GPIO** | ✅ FIXED | SLCR MIO mux for 6 VICOR pins `[0, 39, 47, 8, 38, 37]` — all 6 including MIO0 (Core 1) |
+| **CLI Live Test** | ✅ **21 commands tested March 24-25** | 19 pass, 2 expected timeouts. All crashes fixed (clk_ctrl + SD). See `docs/FBC.md` |
+| **LEDs** | ❌ NONE | Board has NO firmware-controllable LEDs. Only 3.3V (green, power) + DONE (blue, FPGA config) — both hardware-driven |
 | **Error BRAM** | ✅ WIRED | 3× BRAMs at 0x4009_0000, protocol handler added |
+| **clk_ctrl** | ✅ **FIXED March 25** | Root cause: incomplete `case` in AXI write FSM. Added `default:` arms. Verified: `configure --clock 3` works. |
+| **SD Card** | ✅ FIXED | `sd_init_ok` guard added — returns error when no SD card instead of crashing |
+| **Device DNA** | ✅ **VERIFIED March 25** | Unique MAC `00:0A:35:C6:B4:2A` from silicon DNA. Firmware reads FBC_CTRL VERSION at 0x4004_001C to confirm peripheral. |
+| **XADC Temp** | ✅ **VERIFIED March 25** | Reads 39.5°C (was -220°C before u64 overflow fix) |
 | **DMA** | ✅ WIRED | `fbc_dma.v` instantiated, used by `FbcStreamer` |
 
 ### What's NOT Here
@@ -237,11 +535,11 @@ GUI (Tauri) ──Raw Ethernet 0x88B5──▶ Firmware (bare-metal Rust on Cort
                                          │
                                     AXI-Lite bus (GP0)
                                          │
-       ┌──────────┬──────────┬───────────┼───────────┬──────────┬──────────┐
-       ▼          ▼          ▼           ▼           ▼          ▼          ▼
-  fbc_ctrl   io_config   vec_status  clk_ctrl  freq_counter err_bram   fbc_dma
-  0x4004_0   0x4005_0    0x4006_0   0x4008_0   0x4007_0    0x4009_0   0x4040_0
-  ctrl/stat  pin types   error/vec  freq_sel   4ch meas    3×BRAM     HP0 DMA
+       ┌──────────┬──────────┬───────────┼───────────┬──────────┬──────────┬──────────┐
+       ▼          ▼          ▼           ▼           ▼          ▼          ▼          ▼
+  fbc_ctrl   io_config   vec_status  clk_ctrl  freq_counter err_bram  device_dna  fbc_dma
+  0x4004_0   0x4005_0    0x4006_0   0x4008_0   0x4007_0    0x4009_0  0x400A_0    0x4040_0
+  ctrl/stat  pin types   error/vec  freq_sel   4ch meas    3×BRAM    57-bit DNA  HP0 DMA
        │          │          ▲           │                     ▲          │
        ▼          ▼          │           ▼                     │          ▼
     fbc_dma ──▶ axi_stream_fbc ──▶ fbc_decoder ──▶ vector_engine ──▶ io_bank ──▶ 160 Pins
@@ -254,194 +552,59 @@ GUI (Tauri) ──Raw Ethernet 0x88B5──▶ Firmware (bare-metal Rust on Cort
 
 ---
 
-## KNOWN BUGS (Re-verified March 2026)
+## Open Bugs
 
-### ~~🔴 Critical~~
+6. **LOOP_N non-functional** — `fbc_decoder.v:128-132`: no instruction buffer to replay loop body. Unroll in bytecode.
+10b. **Phase clocks hardwired** — `clk_gen.v` CLKOUT5/6 fixed at 50MHz@90/180. Don't follow freq_sel.
+11. **5 opcodes unimplemented** — SYNC, IMM32, IMM128, PATTERN_SEQ, SET_BOTH → S_ERROR. Use SET_PINS + SET_OEN instead.
+16. ~~**Dead code in net.rs**~~ — **FIXED March 25**. TcpServer/UdpPacket/RawFrame were defined but never instantiated in the firmware. Removed. Note: Sonoma support lives in the HOST crate (`sonoma.rs` SonomaClient via SSH) and GUI profiles — NOT in the firmware. The firmware builds exactly one binary: raw Ethernet FBC protocol.
+17. **FreqCounter never used** — `axi_freq_counter.v` at 0x4007_0000, firmware never reads it.
+18. **PCAP module unused** — `hal/pcap.rs` (358 lines), not called.
+19. **Firmware update untested** — BEGIN/CHUNK/COMMIT pipeline exists but never tested on hardware.
+29. ~~**Rust compiler CRC bug**~~ — **FIXED March 25**. `format.rs:write_to()` zeroed CRC in output — every .fbc from Rust compiler had CRC=0. Firmware would have rejected them. Now calculates and writes correct CRC.
+30. ~~**Rust compiler emit_run off-by-one**~~ — **FIXED March 25**. When vec == prev, `emit_run` skipped emitting the vector but used `count-1` for RUN. Fixed: uses `count` when vector not emitted.
+20. **Vector data truncation** — `fbc_decompress.rs:259` copies only 16/20 bytes (128 bits) per vector. Fast pins (128-159) never driven by test vectors. Matches `axi_stream_fbc.v:59` 128-bit bus width. Needs architectural decision: document as constraint, firmware workaround, or RTL fix.
+21. **PATTERN_REP -1 undocumented** — `fbc_decompress.rs:273` subtracts 1 from repeat count. Convention not documented in `fbc_pkg.vh`. Off-by-one risk for encoder authors.
+22. ~~**clk_ctrl AXI crash**~~ — **FIXED March 25**. Root cause: incomplete `case` statements in `clk_ctrl.v` AXI write FSM — missing `default:` arms for unhandled address ranges. Fixed in bitstream rebuild. Verified on hardware: `configure --clock 3` succeeds, board survives.
+23. ~~**SD commands crash board**~~ — **FIXED March 24**. Root cause was uninitialized SDHCI (not byte writes as originally thought). `sd_init_ok` guard added in `main.rs:394-420`.
+24. ~~**XADC temp wrong**~~ — **FIXED and VERIFIED March 25**. u32 overflow in `xadc.rs:242` (`as u32` → `as u64`). `raw * 503975` overflows u32 for raw > 8522. Hardware reads 39.5°C (was -220°C). DUT thermal from MAX11131 ch 22-23 (THERM_CASE/THERM_DUT NTC on calibration BIM). Thermal controller v2 (`thermal.rs`) wired into main.rs.
 
-~~1. **DMA not integrated**~~ — **FIXED.** `fbc_dma.v` instantiated in `system_top.v` at lines 834-884. AXI-Lite on GP0 at 0x4040_0000, AXI master on HP0, AXI-Stream to FBC decoder. IRQ wired.
-
-### ~~FIXED~~
-
-2. ~~**Host CLI broken**~~ — FbcClient now wraps `FbcRawSocket`. Correct 8-byte FBC header.
-3. ~~**VICOR status always timeouts**~~ — Length 48→30, parser 8B→5B per core.
-4. ~~**FastPins wire-order swap**~~ — GUI reads `(din, dout, oen)` matching firmware.
-7. ~~**Rail data dropped**~~ — `BoardStatus` has `rail_voltage_mv`/`rail_current_ma`, `parse_status()` reads all 47B.
-12. ~~**443 lines dead code**~~ — `firmware/src/protocol.rs` deleted.
-13. ~~**~290 lines dead code (host)**~~ — Old FbcClient replaced.
-14. ~~**Duplicate assigns fbc_top.v**~~ — Already gone. Lines 519-521 are the only assignments.
-
-### ~~🟡 High~~
-
-~~5. **All responses broadcast**~~ — **FIXED.** All `send_fbc()` calls now use `sender_mac` or `last_sender_mac`. Only the initial ANNOUNCE (line 240) uses `BROADCAST_MAC`, which is correct behavior.
-
-### 🟡 Medium
-
-6. **LOOP_N non-functional** — `fbc_decoder.v:126-128`: counts iterations but has no instruction buffer/PC to replay loop body. All loops must be unrolled in bytecode.
-
-~~8. **Error BRAMs unconnected**~~ — **FIXED.** 3× `error_bram.v` instantiated in `system_top.v` (lines 892-935). AXI read interface at 0x4009_0000 (lines 937-996). Write index at 0x00, read pattern/vector/cycle at 0x04-0x1C.
-
-~~8b. **fast_error dropped at system_top**~~ — **FIXED.** `fast_error[31:0]` now wired through `fbc_top` → `axi_fbc_ctrl` at register offset 0x2C (`REG_FAST_ERR`). Firmware reads via `FbcCtrl::read_fast_error()`.
-
-~~9. **VICOR GPIO enable commented out**~~ — **FIXED.** `main.rs:61-78` now configures SLCR MIO mux for all 6 VICOR enable pins `[0, 39, 47, 8, 38, 37]` as GPIO before initializing them as outputs. Note: MIO 0 is shared with status LED.
-
-~~10. **Error BRAM readback returns demo data**~~ — **FIXED.** New protocol commands ERROR_LOG_REQ(0x4A) / ERROR_LOG_RSP(0x4B) implemented end-to-end. Firmware reads `ErrorBram` at 0x4009_0000, returns up to 8 entries (28B each: pattern[128b] + vector + cycle). GUI `get_pattern_stats()`/`get_pattern_errors()` now use real data.
-
-10b. **Phase clocks hardwired** — `clk_gen.v` CLKOUT5/6 fixed at 50MHz@90/180. They don't follow freq_sel. Pulse timing only correct at 50MHz. Would require separate phase shifters per frequency to fix.
-
-### 🟢 Low
-
-11. **5 opcodes unimplemented** — SYNC, IMM32, IMM128, PATTERN_SEQ, SET_BOTH defined in `fbc_pkg.vh` but not in decoder → S_ERROR. SET_BOTH requires 256-bit payload (dout+oen) but bus only carries 128 bits. Use SET_PINS + SET_OEN as two instructions instead.
-
-15. ~~**Host CLI limited**~~ — **FIXED March 2026.** All 28 FBC commands implemented in CLI: pause, resume, pmbus-status, pmbus-enable, eeprom-write, firmware-update, log-info, read-log. Input validation added (core 0-5, voltage 0-5000mV, mask 0-63).
-
-16. **Dead code in net.rs** — `TcpServer` struct (~125 lines), `UdpPacket`/`RawFrame` builders (~136 lines) unused. Were "for initial testing".
-
-17. **FreqCounter never used** — `axi_freq_counter.v` fully implemented (4 independent channels), registered at 0x4007_0000, but firmware never reads it.
-
-18. **PCAP module unused** — `hal/pcap.rs` (358 lines) for FPGA reprogramming, not called from anywhere.
-
-19. **Firmware update untested** — `BEGIN/CHUNK/COMMIT` pipeline exists in both GUI and firmware but never tested on real hardware. **Note:** Protocol layer implemented, but `main.rs` doesn't process `pending_fw_begin/chunk/commit` requests yet (needs wiring like VICOR pattern).
+All previously-listed bugs (1-5, 7-10, 12-15) are **FIXED**. Bug 20a (Error BRAM cycle offset) **FIXED March 24** — `regs.rs` read 0x1C/0x20 instead of 0x18/0x1C.
+25. ~~**MAC collision**~~ — **FIXED March 24**. All Zynq 7020 have identical ARM MIDR (0x413FC090), so `dna.rs:from_cpu_id()` gave every board the same MAC `00:0A:35:AD:C0:90`. Fix: added `axi_device_dna.v` (DNA_PORT primitive → AXI registers at 0x400A_0000). `dna.rs:read_from_fpga()` now reads real 57-bit silicon DNA. Each board gets a unique MAC derived from fuse-programmed silicon ID.
+26. ~~**NTC thermistor formula wrong**~~ — **FIXED (deployed March 25)**. `analog.rs` used linear approximation (ignored B coefficient entirely: `let _ = b_coeff;`), wrong divider topology (NTC on bottom vs Sonoma's NTC on top), wrong pullup (10kΩ vs 4.98kΩ). Now: proper B-equation + `ln_approx()`, Sonoma-matched divider (4980Ω pulldown + 150Ω series), default 30kΩ NTC (B=3985.3), `set_ntc_type()` for 10kΩ (B=3492.0). `read_case_temp_mc()`/`read_dut_temp_mc()` added.
+27. ~~**Thermal controller not wired**~~ — **FIXED (deployed March 25)**. `thermal.rs` v2 (P+I+D+feedforward with crystallization decay) wired into `main.rs`. `Thermal` created at boot, target from `board_config.temp_setpoint_dc()`, `update()` called every ~500ms with THERM_CASE temp (fallback XADC), target updates on SET_OVERRIDE 0x80. Simulation: +0.3°C overshoot, instant settle. Heater/fan duty cycles computed, not routed to GPIO/PWM yet.
+28. ~~**DNA peripheral not in bitstream**~~ — **FIXED and VERIFIED March 25**. Bitstream rebuilt with `axi_device_dna.v`. Firmware reads FBC_CTRL VERSION at `0x4004_001C` (offset 0x1C, not 0x00 which is CTRL register — always 0 at reset). VERSION=0x0001_0000 confirms DNA peripheral present. Hardware MAC: `00:0A:35:C6:B4:2A` (unique per silicon DNA).
 
 ---
 
-## AXI Register Map (Verified: Firmware matches RTL)
+## AXI Register Map & Protocol
 
-### axi_fbc_ctrl — 0x4004_0000
+**Full register tables and 75-command protocol map:** `docs/register_map.md` + `docs/PROTOCOL.md`
 
-| Offset | Name | R/W | Bits |
-|--------|------|-----|------|
-| 0x00 | CTRL | R/W | [0]=enable, [1]=reset, [2]=irq_done, [3]=irq_error |
-| 0x04 | STATUS | R | [0]=running, [1]=done, [2]=error |
-| 0x08 | INSTR_LO | R | instruction count |
-| 0x0C | INSTR_HI | R | always 0 (reserved) |
-| 0x10 | CYCLE_LO | R | cycle count low |
-| 0x14 | CYCLE_HI | R | cycle count high |
-| 0x18 | ERROR | R | error flag |
-| 0x1C | VERSION | R | 0x0001_0000 |
-| 0x20 | FAST_DOUT | R/W | fast pin drive |
-| 0x24 | FAST_OEN | R/W | fast pin output enable |
-| 0x28 | FAST_DIN | R | fast pin input readback |
-| 0x2C | FAST_ERR | R | fast pin error flags (from io_bank) |
+Quick reference — base addresses:
+- `0x4004_0000` axi_fbc_ctrl (CTRL, STATUS, CYCLE, FAST_DOUT/OEN/DIN/ERR)
+- `0x4005_0000` io_config (160 pin types + pulse control)
+- `0x4006_0000` axi_vector_status (ERROR_COUNT, VECTOR_COUNT, FIRST_ERR)
+- `0x4007_0000` axi_freq_counter (4 channels, unused)
+- `0x4008_0000` clk_ctrl (FREQ_SEL: 0=5MHz...4=100MHz) — ✅ FIXED March 25
+- `0x4009_0000` error_bram (3× BRAMs: pattern/vector/cycle)
+- `0x400A_0000` axi_device_dna (57-bit silicon ID: DNA_LO/DNA_HI/DNA_STATUS, read-only)
+- `0x4040_0000` fbc_dma (MM2S: SA + LENGTH triggers transfer)
 
-### clk_ctrl — 0x4008_0000
-
-| Offset | Name | R/W | Default |
-|--------|------|-----|---------|
-| 0x00 | FREQ_SEL | R/W | 3 (50MHz). Values: 0=5, 1=10, 2=25, 3=50, 4=100 MHz |
-| 0x04 | STATUS | R | [0]=MMCM locked |
-| 0x08 | ENABLE | R/W | 0 (disabled) |
-
-### io_config — 0x4005_0000
-
-- 0x000-0x04C: 20 × pin_type registers (4 bits/pin, 160 pins)
-- 0x200-0x33C: 80 × pulse_ctrl registers (16 bits/pin, 160 pins)
-
-### axi_vector_status — 0x4006_0000
-
-| Offset | Name | R/W | Bits |
-|--------|------|-----|------|
-| 0x00 | ERROR_COUNT | R | Total errors from error_counter |
-| 0x04 | VECTOR_COUNT | R | Vectors executed |
-| 0x08 | CYCLE_LO | R | Cycle count low |
-| 0x0C | CYCLE_HI | R | Cycle count high |
-| 0x10 | FIRST_ERR_VEC | R | Vector # of first error |
-| 0x14 | STATUS | R | [0]=done, [1]=has_errors, [29]=first_error_valid |
-| 0x18 | FIRST_ERR_LO | R | First error cycle low |
-| 0x1C | FIRST_ERR_HI | R | First error cycle high |
-| 0x3C | VERSION | R | 0x0001_0000 |
-
-### axi_freq_counter — 0x4007_0000
-
-4 independent channels, 0x20 bytes per channel. Per-channel registers:
-
-| Offset | Name | R/W | Bits |
-|--------|------|-----|------|
-| 0x00 | CTRL | R/W | [0]=enable, [1]=irq_en, [23:16]=trig_sel, [15:8]=sig_sel |
-| 0x04 | STATUS | R | State + flags |
-| 0x08 | MAX_CYCLES | R/W | Max cycle count limit |
-| 0x0C | MAX_TIME | R/W | Max time count limit |
-| 0x10 | CYCLES | R | Measured cycle count |
-| 0x14 | TIME | R | Measured time count |
-| 0x18 | TIMEOUT | R/W | Timeout value |
-
-### error_bram — 0x4009_0000
-
-| Offset | Name | R/W | Bits |
-|--------|------|-----|------|
-| 0x00 | READ_INDEX | W | Error entry index to read (sets address for pattern/vector/cycle BRAMs) |
-| 0x04 | PATTERN_0 | R | Error pattern bits [31:0] |
-| 0x08 | PATTERN_1 | R | Error pattern bits [63:32] |
-| 0x0C | PATTERN_2 | R | Error pattern bits [95:64] |
-| 0x10 | PATTERN_3 | R | Error pattern bits [127:96] |
-| 0x18 | VECTOR | R | Vector number when error occurred |
-| 0x1C | CYCLE_LO | R | Cycle count low 32 bits |
-| 0x20 | CYCLE_HI | R | Cycle count high 32 bits |
-
-### fbc_dma — 0x4040_0000
-
-| Offset | Name | R/W | Bits |
-|--------|------|-----|------|
-| 0x00 | MM2S_DMACR | R/W | [0]=run, [2]=reset, [12]=irq_en |
-| 0x04 | MM2S_DMASR | R | [0]=halted, [1]=idle, [12]=ioc_irq, [14]=err_irq |
-| 0x18 | MM2S_SA | R/W | Source address |
-| 0x28 | MM2S_LENGTH | R/W | Transfer length (write triggers start) |
+Protocol: Raw Ethernet 0x88B5, 8-byte FbcHeader (magic=0xFBC0, seq, cmd, flags, length), big-endian.
 
 ---
 
-## Protocol Command Map (28 commands)
+## GUI Command Surface
 
-| Subsystem | Send | Receive | Notes |
-|-----------|------|---------|-------|
-| Setup | BIM_STATUS_REQ(0x01) | ANNOUNCE(0x02) | Discovery |
-| Setup | CONFIGURE(0x30) | CONFIGURE ack | clock_div + voltages |
-| Setup | UPLOAD_VECTORS(0x21) | ack | Chunked: offset+total+size+data |
-| Runtime | START(0x40) | ack | Enables FBC decoder |
-| Runtime | STOP(0x41) | ack | Disables decoder |
-| Runtime | RESET(0x42) | ack | Full reset |
-| Runtime | STATUS_REQ(0xF0) | STATUS_RSP(0xF1) | 47-byte telemetry |
-| Runtime | — | HEARTBEAT(0x48) | 11B, sent every 100ms |
-| Runtime | — | ERROR(0x49) | error_type + cycle + count |
-| ErrorLog | ERROR_LOG_REQ(0x4A) | ERROR_LOG_RSP(0x4B) | start_index+count → up to 8×28B entries |
-| Analog | READ_ALL_REQ(0x70) | READ_ALL_RSP(0x71) | 32 readings, 192B |
-| Power | VICOR_STATUS_REQ(0x80) | VICOR_STATUS_RSP(0x81) | 30B (6×5B) |
-| Power | VICOR_ENABLE(0x82) | deferred | core_mask byte |
-| Power | VICOR_SET_VOLTAGE(0x83) | deferred | core + mv |
-| Power | EMERGENCY_STOP(0x88) | immediate ack | Fire-and-forget |
-| Power | POWER_SEQUENCE_ON(0x89) | deferred | 6 voltages |
-| Power | POWER_SEQUENCE_OFF(0x8A) | deferred | |
-| Power | PMBUS_ENABLE(0x8B) | deferred | addr + enable |
-| EEPROM | READ_REQ(0xA0) | READ_RSP(0xA1) | offset + data |
-| EEPROM | WRITE(0xA2) | WRITE_ACK(0xA3) | offset + len + data |
-| FastPins | READ_REQ(0xD0) | READ_RSP(0xD1) | Wire: din,dout,oen. Moved from 0xC0 to avoid collision |
-| FastPins | WRITE(0xD2) | — | dout + oen |
-| FlightRec | LOG_READ_REQ(0x60) | LOG_READ_RSP(0x61) | SD sector read |
-| FlightRec | LOG_INFO_REQ(0x62) | LOG_INFO_RSP(0x63) | Log metadata |
-| FW Update | INFO_REQ(0xE1) | INFO_RSP(0xE2) | Version + build |
-| FW Update | BEGIN(0xE3) | BEGIN_ACK(0xE4) | size + checksum |
-| FW Update | CHUNK(0xE5) | CHUNK_ACK(0xE6) | offset + data |
-| FW Update | COMMIT(0xE7) | COMMIT_ACK(0xE8) | Verify + apply |
+**Tauri GUI (reference):** 61 Tauri commands in `gui/src-tauri/src/lib.rs`.
+Categories: Connection(3), Discovery(1), Board Control(5), Config(3), FastPins(2), Analog(1),
+Power/VICOR(3), Power/PMBus(5), EEPROM(2), Vectors(6), Firmware(5), Realtime(2), Switch(4),
+Export(3), Pattern Conv(1), Device Config(3), Pin Import(3), Other(5).
 
----
-
-## GUI Command Surface (54 Tauri commands)
-
-| Category | Commands | Count |
-|----------|----------|-------|
-| Connection | list_interfaces, connect, disconnect | 3 |
-| Discovery | discover_boards | 1 |
-| Board Control | get_board_status, start/stop/reset_board, upload_vectors | 5 |
-| Config | get/set_rack_config, compile_device_config | 3 |
-| FastPins | get_fast_pins, set_fast_pins | 2 |
-| Analog | read_analog_channels | 1 |
-| Power (VICOR) | get_vicor_status, set_vicor_enable, set_vicor_voltage | 3 |
-| Power (PMBus) | get_pmbus_status, set_pmbus_enable, emergency_stop, power_seq_on/off | 5 |
-| EEPROM | read_eeprom, write_eeprom | 2 |
-| Vector Engine | get_vector_status, load/start/pause/resume/stop_vectors | 6 |
-| Firmware | detect_fw_type, update_fw_ssh/fbc/batch, get_firmware_info | 5 |
-| Realtime | get_live_boards, get_live_board | 2 |
-| Switch | get/set_switch_config, discover_board_positions, list_serial_ports | 4 |
-| Export/File | export_results, read_file, write_file | 3 |
-| Other | terminal_command, get_detailed_status, get_eeprom_info, pattern_stats/errors | 5 |
+**Native wgpu GUI (product):** `app/` — 14 panels across 4 tabs, ~2,500 lines.
+Transport layer (`app/src/transport.rs`) dispatches 37+ HwCommand variants to FbcClient or
+SonomaClient. Includes 7 switch commands (serial Cisco console). See `docs/FBC.md` section N for details.
 
 ---
 
@@ -491,67 +654,102 @@ The old 2016 kzhang_v2 design. Linux-based. Uses Vivado IPs, shell scripts, AWK 
 - Removed the OS (bare-metal Rust, not Linux)
 - Removed Vivado (ONETWO-derived bitstream)
 - Simplified the protocol (raw Ethernet, not TCP/IP stack)
-- Unified the register interface (7 AXI peripherals, not scatter-gather)
+- Unified the register interface (8 AXI peripherals, not scatter-gather)
 
-### Key Reference Subdirectories
+### Sonoma Reference Docs (AUTHORITATIVE)
+
+Use these paths — NOT the outdated `reference/` folder in the repo:
 
 | Path | Contents |
 |------|----------|
-| `reference/sonoma_docs/` | **START HERE** — March 2026 verified Sonoma docs (hardware, firmware, vector engine, device files) |
+| `C:\Users\isaac\Downloads\sonoma_docs\` | **START HERE** — verified Sonoma hardware/firmware/vector docs |
+| `C:\Users\isaac\Downloads\SOURCE\` | Sonoma source code (ELF binaries, AWK scripts) |
+| `C:\Users\isaac\Downloads\Data (1)\` | Sonoma data files |
+
+### In-Repo Reference (READ ONLY, may be outdated)
+
+| Path | Contents |
+|------|----------|
 | `reference/kzhang_v2_2016/` | Original HDL source (vector.vh, io_table.v, etc.) |
 | `reference/hpbicontroller-rev1/` | Altium PCB schematics |
 | `reference/Everest_3.7.3_20260122_FW_v4.8C/` | Production firmware package |
 | `reference/ZYNQ_REGISTER_MAP.md` | Zynq PS peripheral addresses (still valid) |
 
-### Key Sonoma Facts for FBC Development
+### Key Sonoma Facts
 
-| Sonoma Value | Source | FBC Equivalent |
-|--------------|--------|----------------|
-| AXI vector status: 0x43C00000 (inferred) / 0x404E0000 (from ELF) | sonoma_docs/04 | 0x4006_0000 (our design) |
-| Sonoma DMA: 4 channels at 0x40400000-0x40430000 | sonoma_docs/01 | fbc_dma.v at 0x4040_0000 (wired in system_top.v) |
-| VICOR MIO: [0, 39, 47, 8, 38, 37] | sonoma_docs/04 (AWK verified) | Same mapping in main.rs:61 (SLCR configured) |
-| MIO 36 = ADC bank select | sonoma_docs/04 | Used by AnalogMonitor |
-| .hex format: 80B/vector (header+oen+dout+mask+ctrl) | sonoma_docs/03 | Our format: 20B/vector (compressed) |
-| Pin types 0-7 | sonoma_docs/03 (vector.vh) | Same codes in fbc_pkg.vh |
-| Error formula: `oen & (dout ^ din)` | sonoma_docs/03 (io_table.v) | Same in our io_cell.v |
+VICOR MIO: `[0, 39, 47, 8, 38, 37]` (6 pins, verified). Error formula: `oen & (dout ^ din)` (same in our io_cell.v).
+Pin types 0-7 same as fbc_pkg.vh. Sonoma AXI at 0x404E0000, ours at 0x4006_0000.
+Full Sonoma ELF reference + orchestration details: `SONOMA-INSTRUCTIONS.md`.
 
 ---
 
 ## What Needs Doing (Priority Order)
 
-### Immediate Bug Fixes — DONE
-1. ~~Fix FastPins wire order~~ — GUI parse_fast_pins now reads (din, dout, oen)
-2. ~~Fix VICOR status length check~~ — 48→30, parser 8B→5B per core
-3. ~~Wire FbcClient to fbc_protocol.rs~~ — FbcClient wraps FbcRawSocket
-4. ~~Add rail_voltage/rail_current to GUI BoardStatus~~ — 8 voltages + 8 currents parsed
+### Completed Milestones
+- Bug fixes (1-4): FastPins, VICOR, FbcClient, rail data — all fixed
+- RTL integration (5-7): DMA, error BRAMs, fast_error — all wired
+- Firmware (8-10): unicast, VICOR GPIO, error BRAM readback — all working
+- Bitstream: `build/fbc_system.bit` (3.9 MB) — rebuilt March 25, full timing closure WNS=+0.018ns, all 8 AXI peripherals
+- First Light: ARM firmware running — March 17 (667MHz CPU, 533MHz DDR)
+- AXI verified: All 8 peripherals accessible including device_dna at 0x400A_0000
+- CLI: 38 FBC + 23 Sonoma commands — all tested on live hardware
+- Pattern converter: .hex/.seq/.fbc generation — 166/166 tests
+- March 25: All firmware fixes compiled (thermal v2, NTC, XADC u64, SD guard, DNA guard, dead code cleanup). Comms verified via TP-Link ASIX adapter. Rust compiler CRC + emit_run bugs fixed. Test vector ready (bringup_fast_pins.fbc, 102 vectors)
+- March 25: 0 warnings both crates. 25/25 host tests, 11/11 firmware tests.
+- March 26: DDR slot table + test plan executor fully implemented (firmware + host + CLI). 6 new FbcClient methods, 6 new CLI commands, 11 new protocol wire codes. Wire format parity verified. Cisco switch GUI integration. Native wgpu GUI at 14 panels across 4 tabs.
+- **March 29: Test Plan + DDR Slots deployment ready** — firmware builds with ddr_slots.rs (280 lines) + testplan.rs (636 lines). 17 new protocol commands (0x22-0x2C, 0x35-0x36, 0xF2-0xF3). DDR checkpoint persistence at 0x0030_1000. BIM serial auto-invalidation. Power feedback loop (V×I → thermal DAC). Min/max XADC tracking. IO bank voltage control. Datalog binary format (.fbd) with CRC32.
 
-### RTL Integration — DONE
-5. ~~Instantiate `fbc_dma.v` in `system_top.v`~~ — Wired: GP0 regs + HP0 master + AXI-Stream out
-6. ~~Instantiate `error_bram.v` (×3) in `system_top.v`~~ — Wired: pattern/vector/cycle BRAMs + AXI read at 0x4009_0000
-7. ~~Connect `fast_error` signal~~ — Wired: fbc_top → axi_fbc_ctrl at 0x2C
+### Strategy: CLI-First, GUI-Last
 
-### Firmware Integration — DONE
-8. ~~Implement unicast responses~~ — All `send_fbc()` calls use `sender_mac`/`last_sender_mac`. Only ANNOUNCE broadcasts.
-9. ~~VICOR GPIO enable~~ — SLCR MIO mux configured for all 6 pins before GPIO init. MIO 0 shared with status LED.
-10. ~~Error BRAM readback via protocol~~ — ERROR_LOG_REQ(0x4A)/RSP(0x4B), `ErrorBram` struct reads 0x4009_0000, GUI calls `request_error_log()`.
+**DO NOT build or polish GUI until the CLI proves the system works end-to-end.**
 
-### FPGA Bitstream — DONE
-11. ~~Build bitstream~~ — `build/fbc_system.bit` (3.9 MB), 10 Vivado iterations. 12.6% LUT, 7.5% FF, 84% IO. Timing: vec_clk@50MHz passes (+6.5ns margin), AXI@100MHz marginal (-1.0ns). Inter-clock violations from BUFGMUX tree (constraint issue, not design bug).
+The CLI is the verification layer. Every command, every response, byte-for-byte on real hardware.
+The GUI is just a skin on verified foundations — it gets built AFTER the system is proven.
 
-### Hardware Validation — DONE ✅
-12. ~~Flash bitstream to real Zynq 7020~~ — **DONE March 13, 2026.** `fbc_system.bit` programmed via JTAG (FT232H + fpga_jtag.py). DONE pin asserted, STATUS=0x46107FFC. 5.5s @ 715 KB/s.
-13. ~~Load ARM firmware via JTAG~~ — **DONE March 2026 (First Light).** CPU @ 667MHz, DDR @ 533MHz, ANNOUNCE packet sent.
-14. ~~Verify ANNOUNCE packet on network~~ — **DONE.** Ethernet GEM0 initialized, broadcast sent.
-15. Test AXI register access (all 6 peripherals incl. error_bram) — *In progress*
-16. Run simple vector, verify GPIO toggling — *Next step*
-17. Test firmware update pipeline (BEGIN/CHUNK/COMMIT) on real board — *Requires wiring in main.rs*
+```
+Layer 0: RTL + Firmware (FPGA + ARM)     ← DONE — bitstream rebuilt, all 8 AXI peripherals, timing closure
+Layer 0.5: BOOT.BIN                      ← DONE — deployed via JTAG March 25
+Layer 1: CLI (host crate)                ← DONE — 38 FBC + 23 Sonoma commands, DDR slots + test plan executor
+Layer 1.5: Autonomous burn-in            ← CURRENT — first vector run on hardware (needs 48V + tray)
+Layer 2: C Engine (pattern converter)    ← DONE, 166/166 tests
+Layer 3: GUI (wgpu native app/)          ← IN PROGRESS — 14 panels, 4 tabs, switch integration, dual-profile transport
+```
 
-### Nice-to-Have
-17. Expand host CLI beyond discover+ping
-18. Implement LOOP_N instruction buffer in fbc_decoder
-19. Add phase-shifted clocks that follow freq_sel
-20. Clean up dead code (TcpServer, UdpPacket in net.rs)
-21. Add `set_clock_groups -physically_exclusive` for BUFGMUX outputs to fix inter-clock timing warnings
+**Why:** You don't paint the dashboard before the engine runs. If the CLI can
+discover → configure → upload → run → collect errors → export, then the GUI
+is just invoke() calls to the same proven functions. If the CLI can't do it,
+no amount of React components will fix it.
+
+### What's Next (Priority Order)
+
+18. ~~**Rebuild bitstream**~~ — **DONE March 25**. WNS=+0.018ns, all 8 AXI peripherals. DNA MAC verified: `00:0A:35:C6:B4:2A`.
+19. ~~**Package BOOT.BIN**~~ — **DONE March 25**. Deployed via JTAG.
+20. ~~**First vector run**~~ — **DONE March 29**. Test Plan + DDR Slots implementation complete.
+21. ~~**Verify XADC temp**~~ — **DONE March 25**. Reads 39.5°C (confirms u64 fix).
+22. ~~**CLI: Full burn-in flow**~~ — **DONE March 29**. `slot-upload → set-plan → run-plan → plan-status` implemented in firmware + host + CLI. Needs 48V + tray for hardware verification.
+23. **CLI: Sonoma burn-in flow** — same sequence via SSH, verified against production ELFs
+24. **CLI: Multi-board orchestration** — discover N boards, run same test on all, collect all results
+25. ~~Fix clk_ctrl AXI crash~~ — **DONE March 25**. Root cause: incomplete `case` in AXI write FSM. Verified on hardware.
+26. ~~Thermal GPIO routing~~ — **DONE March 27**. NOT GPIO — heater/cooler via BU2505 DAC (ch1=heater, ch0=cooler). DAC→comparator→FET on BIM. Wired in main.rs safety loop.
+27. **GUI integration** — wire verified CLI commands to native wgpu app panels (transport.rs already has FBC+Sonoma dispatch)
+28. ~~Clean up dead code (TcpServer, UdpPacket in net.rs)~~ — **DONE March 25** (268 lines deleted from firmware).
+29. ~~**DDR slot table + test plan executor**~~ — **DONE March 26, redesigned March 29**. SD pattern storage (256 max) + DDR double-buffer (A/B regions) replaces fixed 8-slot model. PlanExecutor with `pattern_id` references, per-step temp+clock, checkpoint persistence. MAX_STEPS bumped to 96 (real projects: up to 91).
+30. ~~**Cisco switch GUI integration**~~ — **DONE March 26**. Serial console in Facility→Network tab, MAC→board cross-reference, VLAN reconfiguration.
+31. ~~**Firmware FEATURE-COMPLETE (March 28)**~~ — **DONE March 29**. All Sonoma gaps closed. Compiles clean (43 tests, 0 warnings). DDR slots + test plan executor + thermal DAC + V×I feedback + undervoltage + per-step temp+clock + IO bank + min/max XADC + network health.
+32. **Hardware validation** — all code-complete features need first run on real board after deploy.
+
+### What the GUI is NOT
+
+The GUI (`app/`, native wgpu) is a thin layer over verified CLI commands. The Tauri GUI (`gui/`)
+is reference only — the native app is the product. The real validation path is:
+
+```
+CLI command works on hardware  →  HwCommand variant in transport.rs  →  Panel calls send_command()
+```
+
+Any GUI work that doesn't follow this chain is premature. Count CLI commands verified on hardware,
+not panel count. The native app has 14 panels across 4 tabs (Dashboard, Profiling, Engineering, Datalogs),
+dual-profile transport (FBC + Sonoma), and Cisco switch integration — but correctness flows from the CLI.
 
 ---
 
@@ -565,7 +763,7 @@ These values are in the code but have NOT been verified against the actual hardw
 | XADC voltage scale | 3000mV | `analog.rs:64` | **VERIFIED** — ADR5043BKSZ 3.0V precision reference on PCB |
 | PMBus I2C addresses | `lcps_channel_to_addr()` | `hal/pmbus.rs` | May vary across boards |
 | BIM EEPROM format | `BimEeprom` struct | `hal/eeprom.rs` | No external spec, only code |
-| VICOR enable MIO pins | `[0, 39, 47, 8, 38, 37]` | `main.rs:61-78` (SLCR configured) | **VERIFIED** from Sonoma AWK. SLCR MIO mux now set to GPIO. MIO 0 shared with status LED. |
+| VICOR enable MIO pins | `[0, 39, 47, 8, 38, 37]` | `main.rs:94` (SLCR configured) | **VERIFIED.** 6 pins including MIO0 (Core 1). Matches Sonoma VICOR_MAP. |
 | MIO 36 = ADC bank select | ToggleMio 36 for ch 16-31 | Sonoma ReadAnalog.awk | Must not conflict with other MIO 36 usage |
 | Clock freq boundaries | 7.5/17.5/37.5/75 MHz | `regs.rs:393-401` | Edge-case freq may pick wrong preset |
 | ERR_TRIG pin type (0x6) | Falls to BIDI | `io_cell.v:244` | Marked "causes timing problems" |

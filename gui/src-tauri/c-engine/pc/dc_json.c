@@ -41,6 +41,149 @@ static const char SONOMA_PROFILE_JSON[] =
 "}";
 
 /* ═══════════════════════════════════════════════════════════════
+ * BUILT-IN HX PROFILE
+ *
+ * Aehr Test Systems (Incal heritage), XPS-4 controller
+ * 4 axes × 160 channels = 640 total per system
+ * Each axis: 96 drive + 60 monitor + 4 reserved
+ * RMA5608 Power Train, INSPIRE v4.9 software
+ * ═══════════════════════════════════════════════════════════════ */
+
+static const char HX_PROFILE_JSON[] =
+"{"
+"  \"name\": \"HX\","
+"  \"total_channels\": 160,"
+"  \"banks\": ["
+"    {\"name\": \"DRIVE\",   \"start_pin\": 0,   \"num_pins\": 96},"
+"    {\"name\": \"MONITOR\", \"start_pin\": 96,  \"num_pins\": 60},"
+"    {\"name\": \"RESERVED\",\"start_pin\": 156, \"num_pins\": 4}"
+"  ],"
+"  \"cores\": ["
+"    {\"name\": \"PS1\",  \"dac_channel\": 0,  \"mio_pin\": 0,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS2\",  \"dac_channel\": 1,  \"mio_pin\": 1,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS3\",  \"dac_channel\": 2,  \"mio_pin\": 2,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS4\",  \"dac_channel\": 3,  \"mio_pin\": 3,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS5\",  \"dac_channel\": 4,  \"mio_pin\": 4,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS6\",  \"dac_channel\": 5,  \"mio_pin\": 5,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS7\",  \"dac_channel\": 6,  \"mio_pin\": 6,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS8\",  \"dac_channel\": 7,  \"mio_pin\": 7,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS9\",  \"dac_channel\": 8,  \"mio_pin\": 8,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS10\", \"dac_channel\": 9,  \"mio_pin\": 9,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS11\", \"dac_channel\": 10, \"mio_pin\": 10, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS12\", \"dac_channel\": 11, \"mio_pin\": 11, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS13\", \"dac_channel\": 12, \"mio_pin\": 12, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS14\", \"dac_channel\": 13, \"mio_pin\": 13, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS15\", \"dac_channel\": 14, \"mio_pin\": 14, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS16\", \"dac_channel\": 15, \"mio_pin\": 15, \"default_voltage\": 0.0}"
+"  ],"
+"  \"firmware_path\": \"\","
+"  \"vector_dir\": \"\","
+"  \"default_period_ns\": 200.0,"
+"  \"default_drive_on_ns\": 0.0,"
+"  \"default_drive_off_ns\": 90.0,"
+"  \"default_compare_ns\": 100.0"
+"}";
+
+/* ═══════════════════════════════════════════════════════════════
+ * BUILT-IN XP-160 / SHASTA PROFILE
+ *
+ * Aehr Test Systems (Incal heritage), XPS-8 controller
+ * 8 axes × 160 channels = 1280 total per system
+ * Each axis: 96 drive + 60 monitor + 4 reserved
+ * RMA5608 Power Train, INSPIRE XP8 v1.3.16 software
+ * Same driver as HX — Shasta is just the newer version of XP-160
+ * ═══════════════════════════════════════════════════════════════ */
+
+static const char XP160_PROFILE_JSON[] =
+"{"
+"  \"name\": \"XP-160/Shasta\","
+"  \"total_channels\": 160,"
+"  \"banks\": ["
+"    {\"name\": \"DRIVE\",   \"start_pin\": 0,   \"num_pins\": 96},"
+"    {\"name\": \"MONITOR\", \"start_pin\": 96,  \"num_pins\": 60},"
+"    {\"name\": \"RESERVED\",\"start_pin\": 156, \"num_pins\": 4}"
+"  ],"
+"  \"cores\": ["
+"    {\"name\": \"PS1\",  \"dac_channel\": 0,  \"mio_pin\": 0,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS2\",  \"dac_channel\": 1,  \"mio_pin\": 1,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS3\",  \"dac_channel\": 2,  \"mio_pin\": 2,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS4\",  \"dac_channel\": 3,  \"mio_pin\": 3,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS5\",  \"dac_channel\": 4,  \"mio_pin\": 4,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS6\",  \"dac_channel\": 5,  \"mio_pin\": 5,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS7\",  \"dac_channel\": 6,  \"mio_pin\": 6,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS8\",  \"dac_channel\": 7,  \"mio_pin\": 7,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS9\",  \"dac_channel\": 8,  \"mio_pin\": 8,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS10\", \"dac_channel\": 9,  \"mio_pin\": 9,  \"default_voltage\": 0.0},"
+"    {\"name\": \"PS11\", \"dac_channel\": 10, \"mio_pin\": 10, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS12\", \"dac_channel\": 11, \"mio_pin\": 11, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS13\", \"dac_channel\": 12, \"mio_pin\": 12, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS14\", \"dac_channel\": 13, \"mio_pin\": 13, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS15\", \"dac_channel\": 14, \"mio_pin\": 14, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS16\", \"dac_channel\": 15, \"mio_pin\": 15, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS17\", \"dac_channel\": 16, \"mio_pin\": 16, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS18\", \"dac_channel\": 17, \"mio_pin\": 17, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS19\", \"dac_channel\": 18, \"mio_pin\": 18, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS20\", \"dac_channel\": 19, \"mio_pin\": 19, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS21\", \"dac_channel\": 20, \"mio_pin\": 20, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS22\", \"dac_channel\": 21, \"mio_pin\": 21, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS23\", \"dac_channel\": 22, \"mio_pin\": 22, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS24\", \"dac_channel\": 23, \"mio_pin\": 23, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS25\", \"dac_channel\": 24, \"mio_pin\": 24, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS26\", \"dac_channel\": 25, \"mio_pin\": 25, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS27\", \"dac_channel\": 26, \"mio_pin\": 26, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS28\", \"dac_channel\": 27, \"mio_pin\": 27, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS29\", \"dac_channel\": 28, \"mio_pin\": 28, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS30\", \"dac_channel\": 29, \"mio_pin\": 29, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS31\", \"dac_channel\": 30, \"mio_pin\": 30, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS32\", \"dac_channel\": 31, \"mio_pin\": 31, \"default_voltage\": 0.0}"
+"  ],"
+"  \"firmware_path\": \"\","
+"  \"vector_dir\": \"\","
+"  \"default_period_ns\": 200.0,"
+"  \"default_drive_on_ns\": 0.0,"
+"  \"default_drive_off_ns\": 90.0,"
+"  \"default_compare_ns\": 100.0"
+"}";
+
+/* ═══════════════════════════════════════════════════════════════
+ * BUILT-IN MCC PROFILE
+ *
+ * ISE Labs custom burn-in system
+ * 128 channels, 8 power supplies
+ * Watlow thermal via Modbus TCP/IP, PLC integration
+ * 16 configurable pattern zones (unique to MCC)
+ * Coarser timing than Incal systems (1ns vs 200ps)
+ * ═══════════════════════════════════════════════════════════════ */
+
+static const char MCC_PROFILE_JSON[] =
+"{"
+"  \"name\": \"MCC\","
+"  \"total_channels\": 128,"
+"  \"banks\": ["
+"    {\"name\": \"BANK0\", \"start_pin\": 0,   \"num_pins\": 32},"
+"    {\"name\": \"BANK1\", \"start_pin\": 32,  \"num_pins\": 32},"
+"    {\"name\": \"BANK2\", \"start_pin\": 64,  \"num_pins\": 32},"
+"    {\"name\": \"BANK3\", \"start_pin\": 96,  \"num_pins\": 32}"
+"  ],"
+"  \"cores\": ["
+"    {\"name\": \"PS1\", \"dac_channel\": 0, \"mio_pin\": 0, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS2\", \"dac_channel\": 1, \"mio_pin\": 1, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS3\", \"dac_channel\": 2, \"mio_pin\": 2, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS4\", \"dac_channel\": 3, \"mio_pin\": 3, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS5\", \"dac_channel\": 4, \"mio_pin\": 4, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS6\", \"dac_channel\": 5, \"mio_pin\": 5, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS7\", \"dac_channel\": 6, \"mio_pin\": 6, \"default_voltage\": 0.0},"
+"    {\"name\": \"PS8\", \"dac_channel\": 7, \"mio_pin\": 7, \"default_voltage\": 0.0}"
+"  ],"
+"  \"firmware_path\": \"\","
+"  \"vector_dir\": \"\","
+"  \"default_period_ns\": 1000.0,"
+"  \"default_drive_on_ns\": 0.0,"
+"  \"default_drive_off_ns\": 450.0,"
+"  \"default_compare_ns\": 500.0"
+"}";
+
+/* ═══════════════════════════════════════════════════════════════
  * HELPERS
  * ═══════════════════════════════════════════════════════════════ */
 
@@ -182,6 +325,13 @@ int dc_parse_device(const char *json, DcDeviceIR *out, const DcTesterProfile *pr
             safe_strcpy(ts->pattern_name, json_str(step, "pattern_name"), DC_MAX_NAME);
             safe_strcpy(ts->pattern_file, json_str(step, "pattern_file"), DC_MAX_NAME);
             ts->loop_count = json_int(step, "loop_count", 1);
+            /* FBC plan fields (defaults: auto-assign slot, no duration, abort on error) */
+            ts->pattern_id      = json_int(step, "pattern_id", -1);
+            ts->duration_secs   = json_int(step, "duration_secs", 0);
+            ts->fail_action     = json_int(step, "fail_action", 0);
+            ts->error_threshold = json_int(step, "error_threshold", 0);
+            ts->temp_setpoint_dc = json_int(step, "temp_setpoint_dc", 0);
+            ts->clock_div       = json_int(step, "clock_div", -1);
         }
     }
 
@@ -204,6 +354,13 @@ const char *dc_get_builtin_profile(const char *name)
     if (!name) return NULL;
     if (strcasecmp(name, "sonoma") == 0)
         return SONOMA_PROFILE_JSON;
+    if (strcasecmp(name, "hx") == 0)
+        return HX_PROFILE_JSON;
+    if (strcasecmp(name, "xp160") == 0 || strcasecmp(name, "xp-160") == 0 ||
+        strcasecmp(name, "shasta") == 0)
+        return XP160_PROFILE_JSON;
+    if (strcasecmp(name, "mcc") == 0)
+        return MCC_PROFILE_JSON;
     return NULL;
 }
 

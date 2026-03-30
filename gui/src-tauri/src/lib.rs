@@ -11,6 +11,7 @@ mod export;
 mod switch;
 mod realtime;
 mod ssh;
+mod sonoma;
 
 // EDA Migration — new modules
 mod models;
@@ -1356,6 +1357,34 @@ pub fn run() {
             commands::get_live_board,
             // FBC firmware info/update
             commands::get_firmware_info,
+            // Sonoma SSH control
+            sonoma::sonoma_connect,
+            sonoma::sonoma_disconnect,
+            sonoma::sonoma_is_alive,
+            sonoma::sonoma_get_status,
+            sonoma::sonoma_scan_range,
+            sonoma::sonoma_vicor_init,
+            sonoma::sonoma_vicor_voltage,
+            sonoma::sonoma_vicor_disable,
+            sonoma::sonoma_pmbus_set,
+            sonoma::sonoma_pmbus_off,
+            sonoma::sonoma_io_ps,
+            sonoma::sonoma_emergency_stop,
+            sonoma::sonoma_read_xadc,
+            sonoma::sonoma_read_adc32,
+            sonoma::sonoma_read_adc32_high,
+            sonoma::sonoma_load_vectors,
+            sonoma::sonoma_run_vectors,
+            sonoma::sonoma_set_frequency,
+            sonoma::sonoma_set_pin_type,
+            sonoma::sonoma_set_pulse_delays,
+            sonoma::sonoma_pll_on_off,
+            sonoma::sonoma_set_ext_dac,
+            sonoma::sonoma_toggle_mio,
+            sonoma::sonoma_read_mem,
+            sonoma::sonoma_write_mem,
+            sonoma::sonoma_set_temperature,
+            sonoma::sonoma_init,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

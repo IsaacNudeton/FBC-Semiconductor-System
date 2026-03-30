@@ -115,6 +115,45 @@ impl Register for Reg {
     }
 }
 
+// =============================================================================
+// ARM Global Timer (MPCORE at 0xF8F00200)
+// =============================================================================
+// Runs at PERIPHCLK = CPU_CLK / 2 = 333.5 MHz (667 MHz / 2)
+// 64-bit free-running counter, always available
+
+const GLOBAL_TIMER_BASE: usize = 0xF8F0_0200;
+const GT_COUNTER_LO: usize = GLOBAL_TIMER_BASE;
+const GT_COUNTER_HI: usize = GLOBAL_TIMER_BASE + 0x04;
+const GT_CONTROL: usize = GLOBAL_TIMER_BASE + 0x08;
+const GT_TICKS_PER_MS: u64 = 333_500; // 333.5 MHz
+
+/// Initialize the ARM Global Timer (enable if not already running)
+pub fn init_global_timer() {
+    unsafe {
+        let ctrl = core::ptr::read_volatile(GT_CONTROL as *const u32);
+        if ctrl & 1 == 0 {
+            // Timer not running — enable it (prescaler=0, no IRQ, no compare)
+            core::ptr::write_volatile(GT_CONTROL as *mut u32, 1);
+        }
+    }
+}
+
+/// Get milliseconds since timer started (wraps after ~584 years)
+#[inline]
+pub fn get_millis() -> u64 {
+    // Read 64-bit counter atomically (read hi, lo, hi again — if hi changed, re-read)
+    unsafe {
+        loop {
+            let hi1 = core::ptr::read_volatile(GT_COUNTER_HI as *const u32) as u64;
+            let lo = core::ptr::read_volatile(GT_COUNTER_LO as *const u32) as u64;
+            let hi2 = core::ptr::read_volatile(GT_COUNTER_HI as *const u32) as u64;
+            if hi1 == hi2 {
+                return ((hi1 << 32) | lo) / GT_TICKS_PER_MS;
+            }
+        }
+    }
+}
+
 /// Busy-wait delay (approximate microseconds)
 #[inline]
 pub fn delay_us(us: u32) {

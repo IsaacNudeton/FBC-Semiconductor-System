@@ -165,7 +165,7 @@ enum ParsedLine {
 fn parse_line(
     line: &str,
     prev: &Vector,
-    current_label: &mut Option<String>,
+    _current_label: &mut Option<String>,
 ) -> Result<ParsedLine, String> {
     let parts: Vec<&str> = line.split_whitespace().collect();
     if parts.is_empty() {

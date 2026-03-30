@@ -35,6 +35,10 @@
 #define FBC_HEADER_SIZE     32
 #define FBC_PINCONFIG_SIZE  80
 #define FBC_SPARSE_CROSSOVER 15
+#define FBC_THERMAL_SEGMENT  1024  /* vectors per thermal segment */
+
+/* Header flags */
+#define FBC_FLAG_THERMAL_PROFILE 0x01  /* bit 0: thermal profile appended after OP_END */
 
 /* Opcodes */
 #define OP_NOP              0x00
@@ -45,6 +49,108 @@
 #define OP_VECTOR_ONES      0x05
 #define OP_VECTOR_XOR       0x06
 #define OP_END              0x07
+
+/* Thermal power levels (matching firmware thermal.rs PowerLevel) */
+#define THERMAL_POWER_LOW    0
+#define THERMAL_POWER_MEDIUM 1
+#define THERMAL_POWER_HIGH   2
+
+/* Thermal segment: 8 bytes per segment, appended after OP_END */
+typedef struct {
+    uint32_t vector_offset;     /* starting vector index */
+    uint8_t  avg_toggle_rate;   /* average toggles per vector (0-160) */
+    uint8_t  avg_active_pins;   /* average active pins (0-160) */
+    uint8_t  power_level;       /* 0=Low, 1=Medium, 2=High */
+    uint8_t  reserved;
+} FbcThermalSegment;
+
+/* Thermal accumulator (used during compression) */
+typedef struct {
+    uint64_t total_toggles;     /* sum of toggles in current segment */
+    uint64_t total_active;      /* sum of active pins in current segment */
+    uint32_t vectors_in_segment; /* vectors counted in current segment */
+    uint32_t segment_start;     /* vector offset where segment started */
+    FbcThermalSegment *segments; /* dynamic array of completed segments */
+    int num_segments;
+    int cap_segments;
+} ThermalAccum;
+
+static int thermal_init(ThermalAccum *ta)
+{
+    ta->total_toggles = 0;
+    ta->total_active = 0;
+    ta->vectors_in_segment = 0;
+    ta->segment_start = 0;
+    ta->num_segments = 0;
+    ta->cap_segments = 16;
+    ta->segments = (FbcThermalSegment *)malloc(ta->cap_segments * sizeof(FbcThermalSegment));
+    return ta->segments ? 0 : -1;
+}
+
+static int thermal_flush_segment(ThermalAccum *ta)
+{
+    if (ta->vectors_in_segment == 0) return 0;
+
+    /* Grow if needed */
+    if (ta->num_segments >= ta->cap_segments) {
+        int new_cap = ta->cap_segments * 2;
+        FbcThermalSegment *new_buf = (FbcThermalSegment *)realloc(
+            ta->segments, new_cap * sizeof(FbcThermalSegment));
+        if (!new_buf) return -1;
+        ta->segments = new_buf;
+        ta->cap_segments = new_cap;
+    }
+
+    uint32_t avg_toggles = (uint32_t)(ta->total_toggles / ta->vectors_in_segment);
+    uint32_t avg_active  = (uint32_t)(ta->total_active / ta->vectors_in_segment);
+
+    /* Classify power level (same thresholds as thermal.rs estimate_power) */
+    uint8_t level;
+    if (avg_toggles > 40 && avg_active > 60)
+        level = THERMAL_POWER_HIGH;
+    else if (avg_toggles > 20 || avg_active > 40)
+        level = THERMAL_POWER_MEDIUM;
+    else
+        level = THERMAL_POWER_LOW;
+
+    FbcThermalSegment seg;
+    seg.vector_offset   = ta->segment_start;
+    seg.avg_toggle_rate = (uint8_t)(avg_toggles > 160 ? 160 : avg_toggles);
+    seg.avg_active_pins = (uint8_t)(avg_active > 160 ? 160 : avg_active);
+    seg.power_level     = level;
+    seg.reserved        = 0;
+
+    ta->segments[ta->num_segments++] = seg;
+
+    /* Reset for next segment */
+    ta->total_toggles = 0;
+    ta->total_active = 0;
+    ta->segment_start += ta->vectors_in_segment;
+    ta->vectors_in_segment = 0;
+
+    return 0;
+}
+
+/* Accumulate stats for one vector (call with toggles from prev and active pin count) */
+static int thermal_add(ThermalAccum *ta, int toggles, int active_pins, uint32_t repeat)
+{
+    for (uint32_t r = 0; r < repeat; r++) {
+        ta->total_toggles += (uint64_t)toggles;
+        ta->total_active  += (uint64_t)active_pins;
+        ta->vectors_in_segment++;
+
+        if (ta->vectors_in_segment >= FBC_THERMAL_SEGMENT) {
+            if (thermal_flush_segment(ta) < 0) return -1;
+        }
+    }
+    return 0;
+}
+
+static void thermal_free(ThermalAccum *ta)
+{
+    free(ta->segments);
+    ta->segments = NULL;
+}
 
 /* Pin types (matching format.rs PinType enum) */
 #define FBC_PIN_BIDI        0
@@ -406,12 +512,19 @@ int pc_gen_fbc(const PcPattern *p, const char *path, uint32_t vec_clock_hz)
     uint8_t pin_config[FBC_PINCONFIG_SIZE];
     build_pin_config(p, pin_config);
 
-    /* ── Phase 2: Compress vectors ── */
+    /* ── Phase 2: Compress vectors + accumulate thermal profile ── */
     ByteBuf data;
     if (buf_init(&data, 4096) < 0)
         return PC_ERR_ALLOC;
 
+    ThermalAccum thermal;
+    if (thermal_init(&thermal) < 0) {
+        buf_free(&data);
+        return PC_ERR_ALLOC;
+    }
+
     FbcVector prev = FBC_VEC_ZERO;
+    FbcVector thermal_prev = FBC_VEC_ZERO; /* separate prev for thermal (tracks uncompressed) */
     uint64_t total_vectors = 0;
 
     /* Pending run state */
@@ -425,6 +538,18 @@ int pc_gen_fbc(const PcPattern *p, const char *path, uint32_t vec_clock_hz)
         uint64_t repeat = p->vectors[vi].repeat;
         if (repeat == 0) repeat = 1;
 
+        /* Thermal analysis: XOR + popcount (already computed by compression, but we
+           need it per-uncompressed-vector for accurate thermal segmentation) */
+        FbcVector tdiff = fbc_vec_xor(&vec, &thermal_prev);
+        int toggles = fbc_vec_popcount(&tdiff);
+        int active  = fbc_vec_popcount(&vec);
+        if (thermal_add(&thermal, toggles, active, (uint32_t)repeat) < 0) {
+            buf_free(&data);
+            thermal_free(&thermal);
+            return PC_ERR_ALLOC;
+        }
+        thermal_prev = vec;
+
         if (has_pending) {
             if (fbc_vec_eq(&vec, &pending_vec)) {
                 /* Extend the pending run */
@@ -435,6 +560,7 @@ int pc_gen_fbc(const PcPattern *p, const char *path, uint32_t vec_clock_hz)
                 /* Flush the pending run */
                 if (emit_run(&data, &pending_vec, pending_count, &prev) < 0) {
                     buf_free(&data);
+                    thermal_free(&thermal);
                     return PC_ERR_ALLOC;
                 }
                 has_pending = 0;
@@ -451,6 +577,7 @@ int pc_gen_fbc(const PcPattern *p, const char *path, uint32_t vec_clock_hz)
             /* Emit individual vector */
             if (emit_vector(&data, &vec, &prev) < 0) {
                 buf_free(&data);
+                thermal_free(&thermal);
                 return PC_ERR_ALLOC;
             }
             total_vectors += 1;
@@ -461,6 +588,7 @@ int pc_gen_fbc(const PcPattern *p, const char *path, uint32_t vec_clock_hz)
     if (has_pending) {
         if (emit_run(&data, &pending_vec, pending_count, &prev) < 0) {
             buf_free(&data);
+            thermal_free(&thermal);
             return PC_ERR_ALLOC;
         }
     }
@@ -468,8 +596,33 @@ int pc_gen_fbc(const PcPattern *p, const char *path, uint32_t vec_clock_hz)
     /* Emit END opcode */
     if (buf_push(&data, OP_END) < 0) {
         buf_free(&data);
+        thermal_free(&thermal);
         return PC_ERR_ALLOC;
     }
+
+    /* Flush final thermal segment */
+    if (thermal_flush_segment(&thermal) < 0) {
+        buf_free(&data);
+        thermal_free(&thermal);
+        return PC_ERR_ALLOC;
+    }
+
+    /* Append thermal profile after OP_END */
+    for (int si = 0; si < thermal.num_segments; si++) {
+        FbcThermalSegment *seg = &thermal.segments[si];
+        if (buf_push_u32_le(&data, seg->vector_offset) < 0 ||
+            buf_push(&data, seg->avg_toggle_rate) < 0 ||
+            buf_push(&data, seg->avg_active_pins) < 0 ||
+            buf_push(&data, seg->power_level) < 0 ||
+            buf_push(&data, seg->reserved) < 0) {
+            buf_free(&data);
+            thermal_free(&thermal);
+            return PC_ERR_ALLOC;
+        }
+    }
+
+    int num_thermal_segments = thermal.num_segments;
+    thermal_free(&thermal);
 
     /* ── Phase 3: Calculate CRC32 ── */
     /* CRC covers: header (with crc32 field zeroed) + pin_config + data */
@@ -478,6 +631,16 @@ int pc_gen_fbc(const PcPattern *p, const char *path, uint32_t vec_clock_hz)
                                ? 0xFFFFFFFF
                                : (uint32_t)total_vectors;
     write_header(hdr_bytes, num_vec_clamped, (uint32_t)data.len, vec_clock_hz, 0);
+
+    /* Set flags: thermal profile present */
+    if (num_thermal_segments > 0) {
+        hdr_bytes[7] = FBC_FLAG_THERMAL_PROFILE;
+        /* Store segment count in _reserved[0:4] (offset 24-27, LE) */
+        hdr_bytes[24] = (uint8_t)(num_thermal_segments & 0xFF);
+        hdr_bytes[25] = (uint8_t)((num_thermal_segments >> 8) & 0xFF);
+        hdr_bytes[26] = (uint8_t)((num_thermal_segments >> 16) & 0xFF);
+        hdr_bytes[27] = (uint8_t)((num_thermal_segments >> 24) & 0xFF);
+    }
 
     /* CRC = hash(header_with_crc_zero + pin_config + data) */
     size_t crc_total = FBC_HEADER_SIZE + FBC_PINCONFIG_SIZE + data.len;

@@ -289,6 +289,85 @@ int dc_gen_tp(const DcTesterProfile *prof, const DcDeviceIR *dev,
 }
 
 /* ═══════════════════════════════════════════════════════════════
+ * 5b. plan.json — FBC TestPlanDef (DDR slots + autonomous execution)
+ *
+ * Outputs the JSON format consumed by host `set_test_plan()`.
+ * Maps DcTestStep[] to TestPlanDef with slot assignments,
+ * per-step temp/clock, fail actions, and duration.
+ *
+ * Steps with pattern_id == -1 get auto-assigned by step index (0-7).
+ * Steps with temp_setpoint_dc == 0 get sentinel 0x7FFF (no change).
+ * Steps with clock_div == -1 get sentinel 0xFF (no change).
+ * ═══════════════════════════════════════════════════════════════ */
+
+int dc_gen_plan_json(const DcTesterProfile *prof, const DcDeviceIR *dev,
+                     const char *output_dir)
+{
+    (void)prof;
+    if (dev->num_steps == 0 || dev->num_steps > 8) return DC_ERR_PARSE;
+
+    char path[512];
+    build_path(path, sizeof(path), output_dir, "plan.json");
+
+    FILE *f = fopen(path, "w");
+    if (!f) return DC_ERR_WRITE;
+
+    /* Find loop_start: first step with loop_count > 1, or 0 */
+    int loop_start = 0;
+    for (int i = 0; i < dev->num_steps; i++) {
+        if (dev->steps[i].loop_count > 1) {
+            loop_start = i;
+            break;
+        }
+    }
+
+    /* Total duration: sum of all step durations (0 = single pass) */
+    int total_duration = 0;
+    for (int i = 0; i < dev->num_steps; i++) {
+        total_duration += dev->steps[i].duration_secs;
+    }
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"num_steps\": %d,\n", dev->num_steps);
+    fprintf(f, "  \"loop_start\": %d,\n", loop_start);
+    fprintf(f, "  \"total_duration_secs\": %d,\n", total_duration);
+    fprintf(f, "  \"steps\": [\n");
+
+    for (int i = 0; i < dev->num_steps; i++) {
+        const DcTestStep *ts = &dev->steps[i];
+
+        int slot = (ts->pattern_id >= 0) ? ts->pattern_id : i;
+        int dur  = ts->duration_secs;
+        const char *fail = (ts->fail_action == 1) ? "continue" : "abort";
+        int thresh = ts->error_threshold;
+
+        fprintf(f, "    {\n");
+        fprintf(f, "      \"pattern_id\": %d,\n", slot);
+        fprintf(f, "      \"duration_secs\": %d,\n", dur);
+        fprintf(f, "      \"fail_action\": \"%s\",\n", fail);
+        fprintf(f, "      \"error_threshold\": %d", thresh);
+
+        /* Optional: temp_setpoint_dc (omit if 0 → defaults to 0x7FFF sentinel on host) */
+        if (ts->temp_setpoint_dc != 0) {
+            fprintf(f, ",\n      \"temp_setpoint_dc\": %d", ts->temp_setpoint_dc);
+        }
+
+        /* Optional: clock_div (omit if -1 → defaults to 0xFF sentinel on host) */
+        if (ts->clock_div >= 0) {
+            fprintf(f, ",\n      \"clock_div\": %d", ts->clock_div);
+        }
+
+        fprintf(f, "\n    }%s\n", (i < dev->num_steps - 1) ? "," : "");
+    }
+
+    fprintf(f, "  ]\n");
+    fprintf(f, "}\n");
+
+    fclose(f);
+    return DC_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════
  * 6. PowerOn.sh — MIO enable + DAC set, ordered by sequence_order
  * ═══════════════════════════════════════════════════════════════ */
 
@@ -418,6 +497,7 @@ int dc_gen_all(const DcTesterProfile *prof, const DcDeviceIR *dev,
     if ((rc = dc_gen_lvl(prof, dev, output_dir))       != DC_OK) return rc;
     if ((rc = dc_gen_tim(prof, dev, output_dir))       != DC_OK) return rc;
     if ((rc = dc_gen_tp(prof, dev, output_dir))        != DC_OK) return rc;
+    if ((rc = dc_gen_plan_json(prof, dev, output_dir)) != DC_OK) return rc;
     if ((rc = dc_gen_power_on(prof, dev, output_dir))  != DC_OK) return rc;
     if ((rc = dc_gen_power_off(prof, dev, output_dir)) != DC_OK) return rc;
     return DC_OK;

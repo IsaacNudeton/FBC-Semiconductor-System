@@ -154,6 +154,7 @@ DC_API int dc_gen_file(int h, const char *output_dir, int file_type)
     case DC_FILE_TP:        return dc_gen_tp(p, d, output_dir);
     case DC_FILE_POWER_ON:  return dc_gen_power_on(p, d, output_dir);
     case DC_FILE_POWER_OFF: return dc_gen_power_off(p, d, output_dir);
+    case DC_FILE_PLAN_JSON: return dc_gen_plan_json(p, d, output_dir);
     default:
         snprintf(dh->errmsg, DC_MAX_ERR, "Unknown file type: %d", file_type);
         return DC_ERR_WRITE;

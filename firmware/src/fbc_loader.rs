@@ -15,6 +15,7 @@
 //! ```
 
 use core::convert::TryInto;
+use crate::fbc::FbcInstr;
 use crate::regs::{ClkCtrl, PinCtrl, FbcCtrl, PinType, VecClockFreq};
 use crate::dma::{FbcStreamer, DmaResult};
 use crate::fbc_decompress::{decompress_to_bytecode, MAX_BYTECODE_SIZE};
@@ -183,9 +184,9 @@ impl FbcLoader {
         // Reset FBC decoder before loading
         self.fbc_ctrl.reset();
 
-        // DMA vector data to FPGA
+        // DMA vector data to FPGA (pin_config needed to derive initial OEN)
         let vector_data = &fbc_data[HEADER_TOTAL_SIZE..];
-        self.stream_vectors(vector_data)?;
+        self.stream_vectors(pin_config, vector_data)?;
 
         // Enable FBC execution
         self.fbc_ctrl.enable();
@@ -213,7 +214,7 @@ impl FbcLoader {
         self.fbc_ctrl.reset();
 
         let vector_data = &fbc_data[HEADER_TOTAL_SIZE..];
-        self.stream_vectors(vector_data)?;
+        self.stream_vectors(pin_config, vector_data)?;
 
         Ok(header)
     }
@@ -301,20 +302,67 @@ impl FbcLoader {
     /// Stream vector data to FPGA via DMA
     ///
     /// This decompresses the .fbc format (opcodes 0x00-0x07) into FPGA bytecode
-    /// (SET_PINS, PATTERN_REP, HALT) before DMA transfer.
-    fn stream_vectors(&mut self, compressed_data: &[u8]) -> Result<(), LoaderError> {
+    /// (SET_OEN, SET_PINS, PATTERN_REP, HALT) before DMA transfer.
+    ///
+    /// The first instruction is always SET_OEN, derived from pin_config:
+    ///   OUTPUT/BIDI/PULSE/NPULSE/VEC_CLK → OEN=0 (drive)
+    ///   INPUT                            → OEN=1 (tristate)
+    ///
+    /// Without this, fbc_decoder.v resets current_oen to all 1s (all tristate)
+    /// and no pins will drive.
+    fn stream_vectors(&mut self, pin_config: &[u8], compressed_data: &[u8]) -> Result<(), LoaderError> {
         // Allocate bytecode buffer on stack (64KB max)
         // For larger programs, this would need chunked streaming
         let mut bytecode = [0u8; MAX_BYTECODE_SIZE];
+        let mut write_pos = 0;
 
-        // Decompress .fbc format to FPGA bytecode
-        let bytecode_len = match decompress_to_bytecode(compressed_data, &mut bytecode) {
+        // --- Prepend SET_OEN instruction derived from pin config ---
+        // Build 128-bit OEN mask from pin types
+        // OEN=0 means drive, OEN=1 means tristate (matches io_cell.v)
+        let mut oen_mask = [0xFFu8; 16]; // Default: all tristate (128 bits)
+        for i in 0..PIN_CONFIG_SIZE.min(pin_config.len()) {
+            let byte = pin_config[i];
+            let type0 = byte & 0x0F;
+            let type1 = byte >> 4;
+            let pin0 = i * 2;
+            let pin1 = i * 2 + 1;
+
+            // For pins 0-127 (BIM), set OEN based on type
+            if pin0 < 128 {
+                let drive0 = matches!(type0, 0 | 2 | 3 | 4 | 5 | 7 | 8);
+                if drive0 {
+                    oen_mask[pin0 / 8] &= !(1 << (pin0 % 8));
+                }
+            }
+            if pin1 < 128 {
+                let drive1 = matches!(type1, 0 | 2 | 3 | 4 | 5 | 7 | 8);
+                if drive1 {
+                    oen_mask[pin1 / 8] &= !(1 << (pin1 % 8));
+                }
+            }
+        }
+
+        // Write 32-byte SET_OEN instruction word
+        if write_pos + 32 > bytecode.len() {
+            return Err(LoaderError::DmaError);
+        }
+        bytecode[write_pos..write_pos + 32].fill(0);
+        let oen_instr = FbcInstr::new(crate::fbc::FbcOpcode::SetOen, 0, 0);
+        let oen_bytes = oen_instr.to_u64().to_le_bytes();
+        bytecode[write_pos..write_pos + 8].copy_from_slice(&oen_bytes);
+        bytecode[write_pos + 8..write_pos + 24].copy_from_slice(&oen_mask);
+        write_pos += 32;
+
+        // --- Decompress .fbc vectors to FPGA bytecode ---
+        let remaining = &mut bytecode[write_pos..];
+        let decompressed_len = match decompress_to_bytecode(compressed_data, remaining) {
             Some(len) => len,
             None => return Err(LoaderError::DmaError), // Buffer too small
         };
+        write_pos += decompressed_len;
 
-        // DMA the decompressed bytecode to FPGA
-        match self.streamer.stream_program(&bytecode[..bytecode_len]) {
+        // DMA the bytecode (SET_OEN + decompressed SET_PINS + HALT) to FPGA
+        match self.streamer.stream_program(&bytecode[..write_pos]) {
             DmaResult::Ok => Ok(()),
             DmaResult::Busy => Err(LoaderError::DmaBusy),
             DmaResult::Error => Err(LoaderError::DmaError),

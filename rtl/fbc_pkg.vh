@@ -46,7 +46,9 @@
 
 // Pattern operations
 `define FBC_LOOP_N      8'hB0   // Loop next block N times
-`define FBC_PATTERN_REP 8'hB5   // Repeat current pattern N times
+`define FBC_PATTERN_REP 8'hB5   // Repeat current pattern: operand = total_repeats - 1
+                                 //   (vector_engine.v subtracts 1 more because first output is immediate)
+                                 //   Example: repeat 5× → encoder sets operand=4 → RTL loads 3 → 4 counted + 1 immediate = 5
 `define FBC_PATTERN_SEQ 8'hB6   // Generate sequence
 
 // Pin control
@@ -111,6 +113,7 @@
 `define AXI_STATUS_BASE     32'h4006_0000   // Status & error registers
 `define AXI_FREQ_BASE       32'h4007_0000   // Frequency counters
 `define AXI_CLK_CTRL_BASE   32'h4008_0000   // Clock control (ONETWO freq select)
+`define AXI_DNA_BASE        32'h400A_0000   // Device DNA (57-bit silicon ID, read-only)
 
 //=============================================================================
 // Error handling

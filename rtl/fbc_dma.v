@@ -314,27 +314,31 @@ module fbc_dma #(
                 end
 
                 // ---------------------------------------------------------
+                // Present the packed 256-bit word on AXI-Stream and wait
+                // for downstream (fbc_decoder) to accept it.
+                //
+                // IMPORTANT: address and byte count must only update on
+                // the handshake beat (tvalid && tready), not every cycle.
+                // Otherwise backpressure from the decoder corrupts the
+                // transfer by decrementing bytes_left multiple times.
+                // ---------------------------------------------------------
                 S_STREAM_OUT: begin
                     m_axis_tdata  <= pack_reg;
                     m_axis_tvalid <= 1'b1;
-
-                    // Update address and bytes
-                    current_addr <= current_addr + BURST_BYTES;
-                    if (bytes_left <= BURST_BYTES) begin
-                        bytes_left   <= 32'd0;
-                        m_axis_tlast <= 1'b1;
-                    end else begin
-                        bytes_left   <= bytes_left - BURST_BYTES;
-                        m_axis_tlast <= 1'b0;
-                    end
+                    m_axis_tlast  <= (bytes_left <= BURST_BYTES);
 
                     if (m_axis_tvalid && m_axis_tready) begin
+                        // Handshake complete — advance to next burst or finish
                         m_axis_tvalid <= 1'b0;
                         m_axis_tlast  <= 1'b0;
-                        if (bytes_left == 0 || (bytes_left <= BURST_BYTES)) begin
-                            state <= S_DONE;
+                        current_addr  <= current_addr + BURST_BYTES;
+
+                        if (bytes_left <= BURST_BYTES) begin
+                            bytes_left <= 32'd0;
+                            state      <= S_DONE;
                         end else begin
-                            state <= S_BURST_REQ;
+                            bytes_left <= bytes_left - BURST_BYTES;
+                            state      <= S_BURST_REQ;
                         end
                     end
                 end

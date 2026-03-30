@@ -69,14 +69,29 @@ export interface RackConfig {
   assignments: { mac: string; position: SlotPosition }[]
 }
 
+// Sonoma board info from scan
+export interface SonomaBoardInfo {
+  ip: string
+  alive: boolean
+  hostname: string
+}
+
 // Maximum entries to keep in history per board
 const MAX_HISTORY_ENTRIES = 1000
+
+// Control mode: which backend protocol to use
+export type ControlMode = 'fbc' | 'sonoma'
 
 interface AppState {
   // Connection
   connected: boolean
   currentInterface: string | null
   interfaces: string[]
+
+  // Control mode (FBC raw Ethernet vs Sonoma SSH)
+  controlMode: ControlMode
+  sonomaBoards: SonomaBoardInfo[]
+  selectedSonomaBoard: string | null  // IP address
 
   // Boards (legacy - from discover)
   boards: BoardInfo[]
@@ -101,6 +116,11 @@ interface AppState {
   setRackConfig: (config: RackConfig) => void
   getBoardAtPosition: (shelf: number, tray: 'front' | 'back', slot: number) => BoardInfo | null
 
+  // Sonoma actions
+  setControlMode: (mode: ControlMode) => void
+  setSonomaBoards: (boards: SonomaBoardInfo[]) => void
+  setSelectedSonomaBoard: (ip: string | null) => void
+
   // Live board actions
   setLiveBoards: (boards: LiveBoardState[]) => void
   updateLiveBoard: (board: LiveBoardState) => void
@@ -120,6 +140,9 @@ export const useStore = create<AppState>((set, get) => ({
   connected: false,
   currentInterface: null,
   interfaces: [],
+  controlMode: 'fbc',
+  sonomaBoards: [],
+  selectedSonomaBoard: null,
   boards: [],
   selectedBoard: null,
   liveBoards: new Map(),
@@ -139,6 +162,11 @@ export const useStore = create<AppState>((set, get) => ({
   setBoards: (boards) => set({ boards }),
   setSelectedBoard: (selectedBoard) => set({ selectedBoard }),
   setRackConfig: (rackConfig) => set({ rackConfig }),
+
+  // Sonoma actions
+  setControlMode: (controlMode) => set({ controlMode }),
+  setSonomaBoards: (sonomaBoards) => set({ sonomaBoards }),
+  setSelectedSonomaBoard: (selectedSonomaBoard) => set({ selectedSonomaBoard }),
 
   getBoardAtPosition: (shelf, tray, slot) => {
     const { boards, rackConfig } = get()

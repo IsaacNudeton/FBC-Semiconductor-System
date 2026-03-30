@@ -487,13 +487,46 @@ pub struct EepromData {
 // Flight Recorder
 // =============================================================================
 
+/// SD health state
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum SdHealth {
+    Ok = 0,
+    Recovered = 1,
+    Reformatted = 2,
+    Missing = 3,
+    ScannedAndRecovered = 4,
+}
+
+impl SdHealth {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Ok,
+            1 => Self::Recovered,
+            2 => Self::Reformatted,
+            3 => Self::Missing,
+            4 => Self::ScannedAndRecovered,
+            _ => Self::Missing,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::Recovered => "Recovered (single header repaired)",
+            Self::Reformatted => "Reformatted (both headers were corrupt)",
+            Self::Missing => "Missing/unreadable",
+            Self::ScannedAndRecovered => "Scanned & recovered (headers rebuilt from data)",
+        }
+    }
+}
+
 /// Flight recorder log info
 #[derive(Debug, Clone, Serialize)]
 pub struct LogInfo {
     pub sd_present: bool,
-    pub boot_sector: u32,
-    pub log_start: u32,
-    pub log_end: u32,
+    pub sd_health: SdHealth,
+    pub data_start: u32,
+    pub capacity: u32,
     pub current_index: u32,
     pub total_entries: u32,
 }
@@ -550,6 +583,153 @@ pub struct FwCommitAck {
 }
 
 // =============================================================================
+// DDR Slot Status
+// =============================================================================
+
+/// Status of a single pattern (from SD card directory)
+#[derive(Debug, Clone, Serialize)]
+pub struct SlotInfo {
+    /// Pattern index (was slot_id in fixed-slot architecture)
+    pub slot_id: u8,
+    pub flags: u8,
+    pub num_vectors: u32,
+    pub fbc_size: u32,
+    pub vec_clock_hz: u32,
+}
+
+impl SlotInfo {
+    pub fn is_valid(&self) -> bool { self.flags & 0x01 != 0 }
+    pub fn is_loaded(&self) -> bool { self.flags & 0x02 != 0 }
+    pub fn is_verified(&self) -> bool { self.flags & 0x04 != 0 }
+}
+
+/// All 8 DDR slot statuses
+#[derive(Debug, Clone, Serialize)]
+pub struct SlotStatus {
+    pub slots: Vec<SlotInfo>,
+}
+
+// =============================================================================
+// Test Plan Status
+// =============================================================================
+
+/// Plan executor state
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanState {
+    Idle = 0,
+    Loading = 1,
+    Running = 2,
+    StepDone = 3,
+    Complete = 4,
+    Aborted = 5,
+}
+
+impl PlanState {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Idle,
+            1 => Self::Loading,
+            2 => Self::Running,
+            3 => Self::StepDone,
+            4 => Self::Complete,
+            5 => Self::Aborted,
+            _ => Self::Idle,
+        }
+    }
+}
+
+impl std::fmt::Display for PlanState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Idle => write!(f, "Idle"),
+            Self::Loading => write!(f, "Loading"),
+            Self::Running => write!(f, "Running"),
+            Self::StepDone => write!(f, "StepDone"),
+            Self::Complete => write!(f, "Complete"),
+            Self::Aborted => write!(f, "Aborted"),
+        }
+    }
+}
+
+/// Test plan execution status
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanStatus {
+    pub state: PlanState,
+    pub current_step: u8,
+    pub total_steps: u8,
+    pub loop_count: u32,
+    pub elapsed_secs: u32,
+    pub total_errors: u32,
+}
+
+/// Result of a single test plan step
+#[derive(Debug, Clone, Serialize)]
+pub struct StepResult {
+    pub step_index: u8,
+    pub slot_id: u8,
+    pub error_count: u32,
+    pub duration_ms: u32,
+    pub passed: bool,
+}
+
+/// Fail action for test plan steps
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailAction {
+    Abort = 0,
+    Continue = 1,
+}
+
+/// A single step in a test plan (for building plans on host side)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestPlanStep {
+    /// Pattern index on SD card (0-255). Alias: "slot_id" for backward compat.
+    #[serde(alias = "slot_id")]
+    pub pattern_id: u8,
+    pub duration_secs: u32,
+    pub fail_action: FailAction,
+    pub error_threshold: u32,
+    /// Temperature setpoint in deci-Celsius (0.1°C). None = no change.
+    #[serde(default)]
+    pub temp_setpoint_dc: Option<i16>,
+    /// Clock divider (0=5MHz..4=100MHz). None = no change.
+    #[serde(default)]
+    pub clock_div: Option<u8>,
+}
+
+/// Test plan definition (host side, serializable to wire format)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestPlanDef {
+    pub num_steps: u8,
+    pub loop_start: u8,
+    pub total_duration_secs: u32,
+    pub steps: Vec<TestPlanStep>,
+}
+
+impl TestPlanDef {
+    /// Serialize to firmware wire format:
+    /// [num_steps:u8][loop_start:u8][total_duration:u32 BE]
+    /// + per step (13 bytes): [pattern_id:u8][duration_secs:u32 BE][fail_action:u8][error_threshold:u32 BE]
+    ///   [temp_setpoint_dc:i16 BE (0x7FFF=no change)][clock_div:u8 (0xFF=no change)]
+    pub fn to_payload(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(6 + self.steps.len() * 13);
+        buf.push(self.num_steps);
+        buf.push(self.loop_start);
+        buf.extend_from_slice(&self.total_duration_secs.to_be_bytes());
+        for step in &self.steps {
+            buf.push(step.pattern_id);
+            buf.extend_from_slice(&step.duration_secs.to_be_bytes());
+            buf.push(step.fail_action as u8);
+            buf.extend_from_slice(&step.error_threshold.to_be_bytes());
+            buf.extend_from_slice(&step.temp_setpoint_dc.unwrap_or(0x7FFF).to_be_bytes());
+            buf.push(step.clock_div.unwrap_or(0xFF));
+        }
+        buf
+    }
+}
+
+// =============================================================================
 // Sonoma-specific
 // =============================================================================
 
@@ -571,6 +751,160 @@ pub struct RunResult {
     pub vectors_executed: u32,
     pub errors: u32,
     pub duration_s: f32,
+}
+
+// =============================================================================
+// Sonoma Orchestration Types
+// =============================================================================
+
+/// Configuration for a single VICOR core in a test
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoreConfig {
+    /// Core number (1-6)
+    pub id: u8,
+    /// Target voltage in volts
+    pub voltage: f32,
+    /// Delay after enabling (ms)
+    #[serde(default = "default_delay")]
+    pub delay_ms: u64,
+}
+
+/// Configuration for a single PMBus rail in a test
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RailConfig {
+    /// PMBus channel number
+    pub channel: u8,
+    /// Target voltage in volts
+    pub voltage: f32,
+    /// Delay after setting (ms)
+    #[serde(default = "default_delay")]
+    pub delay_ms: u64,
+}
+
+/// Pin configuration from .tim file
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinConfig {
+    /// Pin number (0-127 for Sonoma)
+    pub pin: u8,
+    /// Pin type (0=BIDI,1=INPUT,2=OUTPUT,3=OC,4=PULSE,5=NPULSE,6=ERR_TRIG,7=VEC_CLK)
+    pub pin_type: u8,
+    /// Pulse type (for PULSE/NPULSE pins)
+    #[serde(default)]
+    pub ptype: u8,
+    /// Rise time
+    #[serde(default)]
+    pub rise: u32,
+    /// Fall time
+    #[serde(default)]
+    pub fall: u32,
+    /// Period
+    #[serde(default)]
+    pub period: u32,
+}
+
+impl PinConfig {
+    /// Returns true if this pin needs pulse delay configuration
+    pub fn is_pulse(&self) -> bool {
+        self.pin_type == 4 || self.pin_type == 5 // PULSE or NPULSE
+    }
+}
+
+/// ADC channel check (post-power-on validation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdcCheck {
+    /// ADC channel number
+    pub channel: u8,
+    /// Minimum acceptable voltage (mV)
+    pub min_mv: f32,
+    /// Maximum acceptable voltage (mV)
+    pub max_mv: f32,
+}
+
+fn default_delay() -> u64 {
+    100
+}
+
+/// Full test configuration for single-board burn-in
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestConfig {
+    /// Device directory on board (e.g., "/home/devices/Normandy")
+    pub device_dir: String,
+    /// Path to .seq file on board
+    pub seq_path: String,
+    /// Path to .hex file on board
+    pub hex_path: String,
+    /// Vector clock frequency (Hz)
+    #[serde(default = "default_freq")]
+    pub freq_hz: u32,
+    /// Run duration (seconds)
+    pub time_s: u32,
+    /// Temperature setpoint (None = ambient)
+    #[serde(default)]
+    pub temp_setpoint: Option<f32>,
+    /// Thermistor resistance at 25C (ohms, default 30000 for 30K)
+    #[serde(default = "default_r25c")]
+    pub r25c: f32,
+    /// IO bank voltages
+    #[serde(default)]
+    pub io_b13: f32,
+    #[serde(default)]
+    pub io_b33: f32,
+    #[serde(default)]
+    pub io_b34: f32,
+    #[serde(default)]
+    pub io_b35: f32,
+    /// VICOR core configurations (power-on order)
+    #[serde(default)]
+    pub vicor_cores: Vec<CoreConfig>,
+    /// PMBus rail configurations (power-on order)
+    #[serde(default)]
+    pub pmbus_rails: Vec<RailConfig>,
+    /// Pin configurations from .tim file
+    #[serde(default)]
+    pub pin_configs: Vec<PinConfig>,
+    /// ADC checks after power-on
+    #[serde(default)]
+    pub adc_checks: Vec<AdcCheck>,
+}
+
+fn default_freq() -> u32 {
+    50_000_000 // 50 MHz
+}
+
+fn default_r25c() -> f32 {
+    30000.0 // 30K thermistor
+}
+
+/// Result of a single-board burn-in test
+#[derive(Debug, Clone, Serialize)]
+pub struct TestResult {
+    /// Vector run result
+    pub run: RunResult,
+    /// ADC snapshot taken after power-on
+    pub adc_snapshot: Vec<AnalogReading>,
+}
+
+/// Result of profile verification
+#[derive(Debug, Clone, Serialize)]
+pub struct VerifyResult {
+    /// List of (check_name, passed)
+    pub checks: Vec<(String, bool)>,
+}
+
+impl VerifyResult {
+    pub fn all_passed(&self) -> bool {
+        self.checks.iter().all(|(_, passed)| *passed)
+    }
+}
+
+/// Result of a single board in fleet orchestration
+#[derive(Debug, Clone, Serialize)]
+pub struct BoardResult {
+    pub ip: String,
+    pub duration_ms: u64,
+    pub success: bool,
+    pub run: Option<RunResult>,
+    pub error: Option<String>,
 }
 
 // =============================================================================

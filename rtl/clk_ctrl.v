@@ -102,6 +102,7 @@ module clk_ctrl #(
                         case (s_axi_awaddr[3:2])
                             REG_FREQ_SEL: freq_sel <= s_axi_wdata[2:0];
                             REG_ENABLE:   vec_clk_en <= s_axi_wdata[0];
+                            default: ;  // REG_STATUS is read-only, ignore writes
                         endcase
                         wr_state <= WR_RESP;
                     end else if (s_axi_awvalid) begin
@@ -118,6 +119,7 @@ module clk_ctrl #(
                         case (wr_addr[3:2])
                             REG_FREQ_SEL: freq_sel <= s_axi_wdata[2:0];
                             REG_ENABLE:   vec_clk_en <= s_axi_wdata[0];
+                            default: ;  // REG_STATUS is read-only, ignore writes
                         endcase
                         wr_state <= WR_RESP;
                     end

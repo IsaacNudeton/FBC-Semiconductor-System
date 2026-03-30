@@ -14,6 +14,7 @@ pub const STATUS_BASE: usize      = 0x4006_0000;
 pub const FREQ_COUNTER_BASE: usize = 0x4007_0000;
 pub const CLK_CTRL_BASE: usize    = 0x4008_0000;
 pub const ERROR_BRAM_BASE: usize  = 0x4009_0000;
+pub const DNA_BASE: usize         = 0x400A_0000;
 
 // =============================================================================
 // FBC Control Peripheral
@@ -329,6 +330,23 @@ impl VectorStatus {
         self.read_reg(0x14) & 0x02 != 0
     }
 
+    /// Get first error vector number (register 0x10)
+    pub fn get_first_err_vec(&self) -> u32 {
+        self.read_reg(0x10)
+    }
+
+    /// Check if first error info is valid (STATUS bit 29)
+    pub fn first_error_valid(&self) -> bool {
+        self.read_reg(0x14) & (1 << 29) != 0
+    }
+
+    /// Get first error cycle count (registers 0x18 + 0x1C)
+    pub fn get_first_err_cycle(&self) -> u64 {
+        let lo = self.read_reg(0x18) as u64;
+        let hi = self.read_reg(0x1C) as u64;
+        (hi << 32) | lo
+    }
+
     fn read_reg(&self, offset: usize) -> u32 {
         unsafe { read_volatile((self.base + offset) as *const u32) }
     }
@@ -550,14 +568,16 @@ impl ErrorBram {
     }
 
     /// Read vector number when error occurred
+    /// RTL register map: 0x14 = vector number (system_top.v:944,987)
     pub fn read_vector(&self) -> u32 {
-        unsafe { read_volatile((self.base + 0x18) as *const u32) }
+        unsafe { read_volatile((self.base + 0x14) as *const u32) }
     }
 
     /// Read cycle count when error occurred (64-bit)
+    /// RTL register map: 0x18 = cycle[31:0], 0x1C = cycle[63:32] (system_top.v:945-946,988-989)
     pub fn read_cycle(&self) -> u64 {
-        let lo = unsafe { read_volatile((self.base + 0x1C) as *const u32) };
-        let hi = unsafe { read_volatile((self.base + 0x20) as *const u32) };
+        let lo = unsafe { read_volatile((self.base + 0x18) as *const u32) };
+        let hi = unsafe { read_volatile((self.base + 0x1C) as *const u32) };
         ((hi as u64) << 32) | (lo as u64)
     }
 }

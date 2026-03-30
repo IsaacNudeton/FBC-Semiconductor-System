@@ -516,6 +516,17 @@ module system_top (
     wire        axi_err_bvalid, axi_err_bready;
     wire        axi_err_rvalid, axi_err_rready;
 
+    // Device DNA AXI-Lite (0x400A_0000)
+    wire [11:0] axi_dna_awaddr, axi_dna_araddr;
+    wire        axi_dna_awvalid, axi_dna_awready;
+    wire        axi_dna_arvalid, axi_dna_arready;
+    wire [31:0] axi_dna_wdata, axi_dna_rdata;
+    wire [3:0]  axi_dna_wstrb;
+    wire        axi_dna_wvalid, axi_dna_wready;
+    wire [1:0]  axi_dna_bresp, axi_dna_rresp;
+    wire        axi_dna_bvalid, axi_dna_bready;
+    wire        axi_dna_rvalid, axi_dna_rready;
+
     // Error BRAM write ports (from error_counter inside fbc_top)
     wire [31:0]              err_pat_addr;
     wire [`VECTOR_WIDTH-1:0] err_pat_data;
@@ -667,18 +678,20 @@ module system_top (
     //   0x4006_0000 - 0x4006_0FFF: Vector Status (axi_status)
     //   0x4007_0000 - 0x4007_0FFF: Freq Counter (axi_freq)
     //   0x4008_0000 - 0x4008_0FFF: Clock Ctrl  (axi_clk) - ONETWO freq select
+    //   0x400A_0000 - 0x400A_0FFF: Device DNA  (axi_dna) - 57-bit silicon ID
     //
     // Decode: addr[19:16] selects peripheral group
     //   0x4004_xxxx = FBC Control     0x4005_xxxx = I/O Config
     //   0x4006_xxxx = Vector Status   0x4007_xxxx = Freq Counter
     //   0x4008_xxxx = Clock Ctrl      0x4009_xxxx = Error BRAMs
-    //   0x4040_xxxx = DMA Controller
+    //   0x400A_xxxx = Device DNA      0x4040_xxxx = DMA Controller
     wire fbc_sel    = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h4);
     wire io_sel     = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h5);
     wire status_sel = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h6);
     wire freq_sel_w = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h7);
     wire clk_sel    = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h8);
     wire err_sel    = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'h9);
+    wire dna_sel    = (m_axi_gp0_awaddr[31:20] == 12'h400) && (m_axi_gp0_awaddr[19:16] == 4'hA);
     wire dma_sel    = (m_axi_gp0_awaddr[31:20] == 12'h404);
 
     // Route write address channel
@@ -694,6 +707,8 @@ module system_top (
     assign axi_clk_awvalid    = m_axi_gp0_awvalid && clk_sel;
     assign axi_err_awaddr     = m_axi_gp0_awaddr[11:0];
     assign axi_err_awvalid    = m_axi_gp0_awvalid && err_sel;
+    assign axi_dna_awaddr     = m_axi_gp0_awaddr[11:0];
+    assign axi_dna_awvalid    = m_axi_gp0_awvalid && dna_sel;
     assign axi_dma_awaddr     = m_axi_gp0_awaddr[11:0];
     assign axi_dma_awvalid    = m_axi_gp0_awvalid && dma_sel;
     assign m_axi_gp0_awready = fbc_sel    ? axi_fbc_awready    :
@@ -702,6 +717,7 @@ module system_top (
                                freq_sel_w ? axi_freq_awready   :
                                clk_sel    ? axi_clk_awready    :
                                err_sel    ? axi_err_awready    :
+                               dna_sel    ? axi_dna_awready    :
                                dma_sel    ? axi_dma_awready    : 1'b1;
 
     // Route write data channel
@@ -723,6 +739,9 @@ module system_top (
     assign axi_err_wdata      = m_axi_gp0_wdata;
     assign axi_err_wstrb      = m_axi_gp0_wstrb;
     assign axi_err_wvalid     = m_axi_gp0_wvalid && err_sel;
+    assign axi_dna_wdata      = m_axi_gp0_wdata;
+    assign axi_dna_wstrb      = m_axi_gp0_wstrb;
+    assign axi_dna_wvalid     = m_axi_gp0_wvalid && dna_sel;
     assign axi_dma_wdata      = m_axi_gp0_wdata;
     assign axi_dma_wstrb      = m_axi_gp0_wstrb;
     assign axi_dma_wvalid     = m_axi_gp0_wvalid && dma_sel;
@@ -732,6 +751,7 @@ module system_top (
                               freq_sel_w ? axi_freq_wready   :
                               clk_sel    ? axi_clk_wready    :
                               err_sel    ? axi_err_wready    :
+                              dna_sel    ? axi_dna_wready    :
                               dma_sel    ? axi_dma_wready    : 1'b1;
 
     // Route write response channel
@@ -741,6 +761,7 @@ module system_top (
                               freq_sel_w ? axi_freq_bresp   :
                               clk_sel    ? axi_clk_bresp    :
                               err_sel    ? axi_err_bresp    :
+                              dna_sel    ? axi_dna_bresp    :
                               dma_sel    ? axi_dma_bresp    : 2'b00;
     assign m_axi_gp0_bvalid = fbc_sel    ? axi_fbc_bvalid    :
                               io_sel     ? axi_io_bvalid     :
@@ -748,6 +769,7 @@ module system_top (
                               freq_sel_w ? axi_freq_bvalid   :
                               clk_sel    ? axi_clk_bvalid    :
                               err_sel    ? axi_err_bvalid    :
+                              dna_sel    ? axi_dna_bvalid    :
                               dma_sel    ? axi_dma_bvalid    : 1'b0;
     assign axi_fbc_bready    = m_axi_gp0_bready && fbc_sel;
     assign axi_io_bready     = m_axi_gp0_bready && io_sel;
@@ -755,6 +777,7 @@ module system_top (
     assign axi_freq_bready   = m_axi_gp0_bready && freq_sel_w;
     assign axi_clk_bready    = m_axi_gp0_bready && clk_sel;
     assign axi_err_bready    = m_axi_gp0_bready && err_sel;
+    assign axi_dna_bready    = m_axi_gp0_bready && dna_sel;
     assign axi_dma_bready    = m_axi_gp0_bready && dma_sel;
 
     // Route read address channel (use same decode on araddr)
@@ -764,6 +787,7 @@ module system_top (
     wire freq_sel_rd   = (m_axi_gp0_araddr[31:20] == 12'h400) && (m_axi_gp0_araddr[19:16] == 4'h7);
     wire clk_sel_rd    = (m_axi_gp0_araddr[31:20] == 12'h400) && (m_axi_gp0_araddr[19:16] == 4'h8);
     wire err_sel_rd    = (m_axi_gp0_araddr[31:20] == 12'h400) && (m_axi_gp0_araddr[19:16] == 4'h9);
+    wire dna_sel_rd    = (m_axi_gp0_araddr[31:20] == 12'h400) && (m_axi_gp0_araddr[19:16] == 4'hA);
     wire dma_sel_rd    = (m_axi_gp0_araddr[31:20] == 12'h404);
 
     assign axi_fbc_araddr     = m_axi_gp0_araddr[13:0];
@@ -778,6 +802,8 @@ module system_top (
     assign axi_clk_arvalid    = m_axi_gp0_arvalid && clk_sel_rd;
     assign axi_err_araddr     = m_axi_gp0_araddr[11:0];
     assign axi_err_arvalid    = m_axi_gp0_arvalid && err_sel_rd;
+    assign axi_dna_araddr     = m_axi_gp0_araddr[11:0];
+    assign axi_dna_arvalid    = m_axi_gp0_arvalid && dna_sel_rd;
     assign axi_dma_araddr     = m_axi_gp0_araddr[11:0];
     assign axi_dma_arvalid    = m_axi_gp0_arvalid && dma_sel_rd;
     assign m_axi_gp0_arready = fbc_sel_rd    ? axi_fbc_arready    :
@@ -786,6 +812,7 @@ module system_top (
                                freq_sel_rd   ? axi_freq_arready   :
                                clk_sel_rd    ? axi_clk_arready    :
                                err_sel_rd    ? axi_err_arready    :
+                               dna_sel_rd    ? axi_dna_arready    :
                                dma_sel_rd    ? axi_dma_arready    : 1'b1;
 
     // Route read data channel
@@ -795,6 +822,7 @@ module system_top (
                               freq_sel_rd   ? axi_freq_rdata   :
                               clk_sel_rd    ? axi_clk_rdata    :
                               err_sel_rd    ? axi_err_rdata    :
+                              dna_sel_rd    ? axi_dna_rdata    :
                               dma_sel_rd    ? axi_dma_rdata    : 32'h0;
     assign m_axi_gp0_rresp  = fbc_sel_rd    ? axi_fbc_rresp    :
                               io_sel_rd     ? axi_io_rresp     :
@@ -802,6 +830,7 @@ module system_top (
                               freq_sel_rd   ? axi_freq_rresp   :
                               clk_sel_rd    ? axi_clk_rresp    :
                               err_sel_rd    ? axi_err_rresp    :
+                              dna_sel_rd    ? axi_dna_rresp    :
                               dma_sel_rd    ? axi_dma_rresp    : 2'b00;
     assign m_axi_gp0_rvalid = fbc_sel_rd    ? axi_fbc_rvalid    :
                               io_sel_rd     ? axi_io_rvalid     :
@@ -809,6 +838,7 @@ module system_top (
                               freq_sel_rd   ? axi_freq_rvalid   :
                               clk_sel_rd    ? axi_clk_rvalid    :
                               err_sel_rd    ? axi_err_rvalid    :
+                              dna_sel_rd    ? axi_dna_rvalid    :
                               dma_sel_rd    ? axi_dma_rvalid    : 1'b0;
     assign axi_fbc_rready    = m_axi_gp0_rready && fbc_sel_rd;
     assign axi_io_rready     = m_axi_gp0_rready && io_sel_rd;
@@ -816,6 +846,7 @@ module system_top (
     assign axi_freq_rready   = m_axi_gp0_rready && freq_sel_rd;
     assign axi_clk_rready    = m_axi_gp0_rready && clk_sel_rd;
     assign axi_err_rready    = m_axi_gp0_rready && err_sel_rd;
+    assign axi_dna_rready    = m_axi_gp0_rready && dna_sel_rd;
     assign axi_dma_rready    = m_axi_gp0_rready && dma_sel_rd;
 
     // AXI ID passthrough (single master, IDs don't matter much)
@@ -993,6 +1024,37 @@ module system_top (
         end
     end
 
+    //=========================================================================
+    // Device DNA Reader (0x400A_0000)
+    //=========================================================================
+    // Reads 57-bit unique silicon ID from Xilinx DNA_PORT primitive.
+    // Firmware uses DNA to derive per-board MAC address.
+    axi_device_dna u_device_dna (
+        .clk            (clk_100m),
+        .rst_n          (sys_resetn),
+
+        // AXI-Lite read interface
+        .s_axi_araddr   (axi_dna_araddr),
+        .s_axi_arvalid  (axi_dna_arvalid),
+        .s_axi_arready  (axi_dna_arready),
+        .s_axi_rdata    (axi_dna_rdata),
+        .s_axi_rresp    (axi_dna_rresp),
+        .s_axi_rvalid   (axi_dna_rvalid),
+        .s_axi_rready   (axi_dna_rready),
+
+        // AXI-Lite write interface (accepted + ignored — read-only)
+        .s_axi_awaddr   (axi_dna_awaddr),
+        .s_axi_awvalid  (axi_dna_awvalid),
+        .s_axi_awready  (axi_dna_awready),
+        .s_axi_wdata    (axi_dna_wdata),
+        .s_axi_wstrb    (axi_dna_wstrb),
+        .s_axi_wvalid   (axi_dna_wvalid),
+        .s_axi_wready   (axi_dna_wready),
+        .s_axi_bresp    (axi_dna_bresp),
+        .s_axi_bvalid   (axi_dna_bvalid),
+        .s_axi_bready   (axi_dna_bready)
+    );
+
 `else
     // Simulation: Stub signals driven by testbench
     reg sim_clk_100m = 0;
@@ -1053,6 +1115,16 @@ module system_top (
     assign axi_freq_araddr  = 12'b0;
     assign axi_freq_arvalid = 1'b0;
     assign axi_freq_rready  = 1'b1;
+
+    assign axi_dna_awaddr  = 12'b0;
+    assign axi_dna_awvalid = 1'b0;
+    assign axi_dna_wdata   = 32'b0;
+    assign axi_dna_wstrb   = 4'b0;
+    assign axi_dna_wvalid  = 1'b0;
+    assign axi_dna_bready  = 1'b1;
+    assign axi_dna_araddr  = 12'b0;
+    assign axi_dna_arvalid = 1'b0;
+    assign axi_dna_rready  = 1'b1;
 
     assign axis_tdata  = 256'b0;
     assign axis_tvalid = 1'b0;

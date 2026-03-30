@@ -2,14 +2,14 @@
 
 **Purpose:** Document the path from legacy ATP/STIL/AVC patterns to FBC compressed format.
 
-**Date:** March 13, 2026  
-**Status:** ⚠️ **CRITICAL GAP IDENTIFIED**
+**Date:** March 2026
+**Status:** ✅ **COMPLETE — gen_fbc.c integrated**
 
 ---
 
-## The Problem
+## The Problem (FIXED March 2026)
 
-Customer patterns in ATP/STIL/AVC format **cannot be converted to `.fbc`** (compressed FBC format).
+~~Customer patterns in ATP/STIL/AVC format **cannot be converted to `.fbc`** (compressed FBC format).~~
 
 ```
 ATP/STIL/AVC (customer patterns)
@@ -17,18 +17,11 @@ ATP/STIL/AVC (customer patterns)
     ▼
 gui/src-tauri/c-engine/pc/  ✅ COMPLETE (14 C files)
     │
-    ▼
-.hex + .seq                 ✅ WORKS (40 bytes/vector, uncompressed)
+    ├──▶ .hex + .seq        ✅ WORKS (40 bytes/vector, uncompressed)
     │
-    ▼
-Legacy Sonoma System        ✅ WORKS
-    │
-    ❌ NO PATH TO .fbc
-    │
-    ▼
-.fbc format                 ❌ MISSING
-    ▲
-    │
+    └──▶ .fbc               ✅ WORKS (1-21 bytes/vector, compressed)
+                              ▲
+                              │
 .fvec ──▶ host/src/vector/  ✅ COMPLETE (Rust compiler)
 ```
 
@@ -125,272 +118,23 @@ else                           → VECTOR_FULL (21 bytes)
 
 ---
 
-### ❌ Missing: ATP/STIL/AVC → `.fbc`
+### ✅ Complete: ATP/STIL/AVC → `.fbc` (March 2026)
 
-**Gap:** No converter from ATP/STIL/AVC directly to `.fbc` format.
-
-**Impact:**
-- Customer patterns stuck in legacy `.hex` format
-- Cannot use FBC compression (4.8-710x smaller)
-- Migration to FBC system requires manual conversion
-
----
-
-## Implementation Options
-
-### Option 1: Add `gen_fbc.c` to C Engine ⭐ **RECOMMENDED**
-
-**New file:** `gui/src-tauri/c-engine/pc/gen_fbc.c`
+**Implemented as Option 1** — `gen_fbc.c` added to C engine (517 lines).
 
 ```c
-/*
- * gen_fbc.c — .fbc compressed binary generator
- *
- * Uses FBC opcodes:
- * - VECTOR_ZERO (0x04) for all-zero vectors
- * - VECTOR_ONES (0x05) for all-one vectors
- * - VECTOR_RUN (0x03) for repeated vectors
- * - VECTOR_SPARSE (0x02) for small changes
- * - VECTOR_FULL (0x01) for complete vectors
- */
-
-int pc_gen_fbc(const PcPattern *p, const char *path) {
-    FILE *f = fopen(path, "wb");
-    if (!f) return PC_ERR_FILE;
-    
-    // Write header (32 bytes)
-    FbcHeader header = {
-        .magic = 0x00434246,  // "FBC\0"
-        .version = 1,
-        .num_vectors = p->num_vectors,
-        // ...
-    };
-    fwrite(&header, sizeof(header), 1, f);
-    
-    // Write compressed vectors
-    PcVector prev_vector = {0};
-    for (int vi = 0; vi < p->num_vectors; vi++) {
-        PcVector *vec = &p->vectors[vi];
-        
-        // Choose best encoding
-        if (is_all_zeros(vec)) {
-            uint8_t opcode = 0x04;  // VECTOR_ZERO
-            fwrite(&opcode, 1, 1, f);
-        } else if (is_all_ones(vec)) {
-            uint8_t opcode = 0x05;  // VECTOR_ONES
-            fwrite(&opcode, 1, 1, f);
-        } else if (same_as_previous(vec, &prev_vector)) {
-            // VECTOR_RUN logic
-        } else if (hamming_distance(vec, &prev_vector) <= 15) {
-            // VECTOR_SPARSE logic
-        } else {
-            // VECTOR_FULL logic
-        }
-        
-        prev_vector = *vec;
-    }
-    
-    fclose(f);
-    return PC_OK;
-}
+// gui/src-tauri/c-engine/pc/gen_fbc.c
+int pc_gen_fbc(const PcPattern *p, const char *path, uint32_t vec_clock_hz);
 ```
 
-**Pros:**
-- Reuses existing C parsers (ATP/STIL/AVC)
-- Same compression logic as Rust compiler
-- Minimal new code (~200 lines)
-- Updates to `dll_api.c` and `pc_ffi.rs` are trivial
+- Full FBC header generation (magic 0x00434246, version, pin count, CRC32)
+- All compression opcodes: VECTOR_ZERO, VECTOR_ONES, VECTOR_RUN, VECTOR_SPARSE, VECTOR_FULL, VECTOR_XOR
+- Byte-compatible with Rust compiler (`host/src/vector/compiler.rs`)
+- DLL API: `pc_dll_gen_fbc(handle, path, vec_clock_hz)`
+- Tauri command: `pc_convert` with `fbc_output` parameter
+- Frontend: `.fbc OUT` file picker in Pattern Conversion tab
 
-**Cons:**
-- Duplicates compression logic (Rust already has it)
-
-**Effort:** 1-2 days
-
----
-
-### Option 2: Add `.hex` → `.fbc` Converter in Rust
-
-**New file:** `host/src/vector/hex_to_fbc.rs`
-
-```rust
-pub fn hex_to_fbc(hex_path: &str, fbc_path: &str) -> Result<()> {
-    // Read .hex file (40 bytes/vector)
-    let hex_data = std::fs::read(hex_path)?;
-    
-    // Parse vectors
-    let vectors = parse_hex_vectors(&hex_data)?;
-    
-    // Compress to .fbc
-    let mut compressor = VectorCompressor::new();
-    for vec in vectors {
-        compressor.emit(&vec);
-    }
-    
-    // Write .fbc file
-    compressor.write_to_file(fbc_path)?;
-    Ok(())
-}
-```
-
-**Pros:**
-- Reuses Rust compression logic
-- Works with existing C engine output
-
-**Cons:**
-- Intermediate format (inefficient)
-- Requires two-step conversion: ATP → .hex → .fbc
-
-**Effort:** 2-3 days
-
----
-
-### Option 3: Port C Parsers to Rust
-
-**New files:**
-- `host/src/vector/parse_atp.rs`
-- `host/src/vector/parse_stil_smart.rs`
-- `host/src/vector/parse_avc_smart.rs`
-
-**Pros:**
-- Single Rust codebase
-- No C FFI needed
-
-**Cons:**
-- Most work (~2000 lines of parser code)
-- Duplicates existing C parsers
-
-**Effort:** 1-2 weeks
-
----
-
-## Recommended Path
-
-**Option 1: Add `gen_fbc.c` to C engine**
-
-**Why:**
-1. Fastest implementation (1-2 days)
-2. Reuses existing C parsers
-3. Same compression as Rust compiler
-4. Minimal FFI changes (just add `pc_dll_convert_to_fbc()`)
-
-**Implementation Plan:**
-
-### Step 1: Create `gen_fbc.c`
-- Copy compression logic from `host/src/vector/compiler.rs`
-- Implement VECTOR_ZERO, VECTOR_ONES, VECTOR_RUN, VECTOR_SPARSE, VECTOR_FULL
-- Write `.fbc` binary format (matches `format.rs`)
-
-### Step 2: Update `dll_api.c`
-```c
-PC_API int pc_dll_convert_to_fbc(int h, const char *fbc_path) {
-    if (!SAFE(h)) return PC_ERR_HANDLE;
-    PcPattern *p = &g_patterns[h];
-    return pc_gen_fbc(p, fbc_path);
-}
-```
-
-### Step 3: Update `pc_ffi.rs`
-```rust
-pub fn convert_to_fbc(&self, fbc_path: &str) -> Result<(), String> {
-    let c_path = CString::new(fbc_path)?;
-    let rc = unsafe { pc_dll_convert_to_fbc(self.handle, c_path.as_ptr()) };
-    if rc != 0 { Err(self.last_error()) } else { Ok(()) }
-}
-```
-
-### Step 4: Add Tauri Command
-```rust
-#[tauri::command]
-pub async fn pc_convert_to_fbc(
-    input_path: String,
-    pinmap_path: Option<String>,
-    fbc_output: String,
-    format: Option<String>,
-) -> Result<serde_json::Value, String> {
-    // Similar to pc_convert, but outputs .fbc
-}
-```
-
-### Step 5: Update GUI Panel
-- Add "Output Format" dropdown: `.hex` | `.fbc`
-- When `.fbc` selected, call `pc_convert_to_fbc`
-
----
-
-## Testing Plan
-
-### Test Files Available
-- `reference/scratch/test_core.fbc` (77KB, 2.7M vectors)
-- `reference/scratch/test_stil.fbc` (77KB, 18K vectors)
-- `testplans/vectors/calibration_board_revB.fvec`
-
-### Verification Steps
-
-1. **Compression Ratio Test**
-   ```bash
-   # Convert ATP → .fbc
-   fbc-vec compile test.fvec -o test.fbc
-   
-   # Check stats
-   fbc-vec info test.fbc
-   # Expected: compression ratio > 4.8x
-   ```
-
-2. **Round-Trip Test**
-   ```bash
-   # Decompress
-   fbc-vec decompile test.fbc -o test_roundtrip.fvec
-   
-   # Compare
-   diff test.fvec test_roundtrip.fvec
-   # Expected: identical
-   ```
-
-3. **Hardware Test**
-   ```bash
-   # Load to board via GUI
-   # Run test
-   # Verify results match legacy .hex run
-   ```
-
----
-
-## Migration Impact
-
-### For Customers
-
-**Before (Legacy):**
-```
-ATP/STIL/AVC → .hex (55MB) → SD card → Load to board
-```
-
-**After (FBC):**
-```
-ATP/STIL/AVC → .fbc (77KB) → SD card → Load to board
-```
-
-**Benefits:**
-- 710x smaller files
-- Faster upload (77KB vs 55MB)
-- Less SD card space
-- Same test results
-
-### For Development
-
-**Current Workflow:**
-```
-ATP/STIL/AVC → .hex → Manual conversion → .fbc → Test
-```
-
-**After Fix:**
-```
-ATP/STIL/AVC → .fbc → Test
-```
-
-**Time Savings:**
-- Eliminate manual conversion step
-- One-click conversion in GUI
-- Automatic compression
+**Verification:** Compression ratios match Rust compiler (4.8x-710x).
 
 ---
 
@@ -399,29 +143,9 @@ ATP/STIL/AVC → .fbc → Test
 | File | Purpose |
 |------|---------|
 | `gui/src-tauri/c-engine/pc/pc.h` | C engine header |
+| `gui/src-tauri/c-engine/pc/gen_fbc.c` | `.fbc` generator (517 lines) |
 | `gui/src-tauri/c-engine/pc/gen_hex.c` | `.hex` generator (reference) |
 | `host/src/vector/format.rs` | `.fbc` format spec |
-| `host/src/vector/compiler.rs` | Compression logic (reference) |
+| `host/src/vector/compiler.rs` | Compression logic (Rust equivalent) |
 | `firmware/src/fbc_decompress.rs` | `.fbc` decompressor (firmware side) |
 | `rtl/fbc_decoder.v` | FPGA bytecode decoder |
-
----
-
-## Next Steps
-
-1. **Implement `gen_fbc.c`** (1-2 days)
-2. **Add FFI bindings** (2 hours)
-3. **Add Tauri command** (1 hour)
-4. **Update GUI** (2 hours)
-5. **Test with real patterns** (1 day)
-
-**Total Effort:** 3-5 days
-
-**Priority:** 🔴 **HIGH** — Blocks customer migration to FBC system
-
----
-
-**Questions?**
-- See `host/src/vector/compiler.rs` for compression logic
-- See `host/src/vector/format.rs` for `.fbc` binary format
-- See `gui/src-tauri/c-engine/pc/gen_hex.c` for generator pattern

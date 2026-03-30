@@ -8,8 +8,10 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use futures::stream::{self, StreamExt};
 use russh::*;
 use russh::client;
 use russh_keys::key;
@@ -647,4 +649,313 @@ impl SonomaClient {
         ).await.ok();
         Ok(())
     }
+
+    // =========================================================================
+    // Orchestration — Single-Board Burn-In
+    // =========================================================================
+
+    /// PMBus set with retry and exponential backoff
+    async fn pmbus_with_retry(
+        &self,
+        channel: u8,
+        voltage: f32,
+        retries: u8,
+    ) -> Result<(), SonomaError> {
+        for attempt in 0..retries {
+            match self.pmbus_set(channel, voltage).await {
+                Ok(_) => return Ok(()),
+                Err(e) if attempt < retries - 1 => {
+                    eprintln!(
+                        "PMBus ch{} attempt {}/{} failed: {}",
+                        channel,
+                        attempt + 1,
+                        retries,
+                        e
+                    );
+                    tokio::time::sleep(Duration::from_millis(500 * (attempt as u64 + 1)))
+                        .await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        unreachable!()
+    }
+
+    /// Power-off sequence (reverse order, best-effort)
+    async fn power_off(&self, config: &TestConfig) {
+        // VICOR cores off (reverse order)
+        for core in config.vicor_cores.iter().rev() {
+            self.vicor_disable(core.id).await.ok();
+        }
+        // PMBus rails off (reverse order)
+        for rail in config.pmbus_rails.iter().rev() {
+            self.pmbus_off(rail.channel).await.ok();
+        }
+        // Zero IO banks
+        self.io_ps(0.0, 0.0, 0.0, 0.0).await.ok();
+    }
+
+    /// Run a complete single-board burn-in test
+    ///
+    /// Sequence: init → pins → clock → power on → ADC verify → temp → vectors → power off → cool
+    pub async fn run_test(&self, config: &TestConfig) -> Result<TestResult, SonomaError> {
+        // 1. Verify board alive
+        if !self.is_alive().await {
+            return Err(SonomaError::Connection("Board not reachable".into()));
+        }
+
+        // 2. Init (zero everything)
+        self.init().await?;
+
+        // 3. Configure pins from .tim file
+        for pin_cfg in &config.pin_configs {
+            self.set_pin_type(pin_cfg.pin, pin_cfg.pin_type).await?;
+            if pin_cfg.is_pulse() {
+                self.set_pulse_delays(
+                    pin_cfg.pin,
+                    pin_cfg.ptype,
+                    pin_cfg.rise,
+                    pin_cfg.fall,
+                    pin_cfg.period,
+                )
+                .await?;
+            }
+        }
+
+        // 4. Set clock frequency
+        self.set_frequency(0, config.freq_hz, 50).await?;
+        self.pll_on_off([true, true, true, true]).await?;
+
+        // 5. Power sequence ON (order matters!)
+        //    a. IO banks first
+        self.io_ps(config.io_b13, config.io_b33, config.io_b34, config.io_b35)
+            .await?;
+
+        //    b. PMBus channels (with retry)
+        for rail in &config.pmbus_rails {
+            if let Err(e) = self.pmbus_with_retry(rail.channel, rail.voltage, 3).await {
+                eprintln!("PMBus ch{} power-on failed, triggering emergency stop", rail.channel);
+                self.emergency_stop().await.ok();
+                return Err(e);
+            }
+            tokio::time::sleep(Duration::from_millis(rail.delay_ms)).await;
+        }
+
+        //    c. VICOR cores (init = first time with MIO enable)
+        for core in &config.vicor_cores {
+            if let Err(e) = self.vicor_init(core.id, core.voltage).await {
+                self.emergency_stop().await.ok();
+                return Err(e);
+            }
+            tokio::time::sleep(Duration::from_millis(core.delay_ms)).await;
+        }
+
+        // 6. Read ADC to verify power rails settled
+        let adc = self.read_adc32().await.unwrap_or_default();
+        for check in &config.adc_checks {
+            if let Some(r) = adc.iter().find(|r| r.channel == check.channel) {
+                if r.voltage_mv < check.min_mv || r.voltage_mv > check.max_mv {
+                    eprintln!(
+                        "ADC ch{} = {:.1}mV out of range ({:.1}-{:.1}mV), emergency stop",
+                        check.channel, r.voltage_mv, check.min_mv, check.max_mv
+                    );
+                    self.emergency_stop().await.ok();
+                    return Err(SonomaError::Parse(format!(
+                        "ADC ch{} = {:.1}mV, expected {:.1}-{:.1}mV",
+                        check.channel, r.voltage_mv, check.min_mv, check.max_mv
+                    )));
+                }
+            }
+        }
+
+        // 7. Set temperature (if thermal test)
+        if let Some(temp) = config.temp_setpoint {
+            if let Err(e) = self.set_temperature(temp, config.r25c, false).await {
+                self.emergency_stop().await.ok();
+                return Err(e);
+            }
+        }
+
+        // 8. Load + run vectors (emergency stop on failure)
+        let run_result = async {
+            self.load_vectors(&config.seq_path, &config.hex_path)
+                .await?;
+            self.run_vectors(&config.seq_path, config.time_s, false)
+                .await
+        }
+        .await;
+
+        let result = match run_result {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Vector execution failed, triggering emergency stop");
+                self.emergency_stop().await.ok();
+                return Err(e);
+            }
+        };
+
+        // 9. Power sequence OFF (reverse order)
+        self.power_off(config).await;
+
+        // 10. Cool down (if thermal test)
+        if config.temp_setpoint.is_some() {
+            self.set_temperature(25.0, config.r25c, true).await.ok();
+        }
+
+        Ok(TestResult {
+            run: result,
+            adc_snapshot: adc,
+        })
+    }
+
+    // =========================================================================
+    // Profile Verification
+    // =========================================================================
+
+    /// Verify board matches Sonoma profile
+    pub async fn verify_profile(&self) -> Result<VerifyResult, SonomaError> {
+        let mut checks: Vec<(String, bool)> = Vec::new();
+
+        // 1. SSH reachable
+        let alive = self.is_alive().await;
+        checks.push(("ssh".into(), alive));
+
+        if !alive {
+            // Can't run remaining checks
+            checks.push(("firmware".into(), false));
+            checks.push(("xadc".into(), false));
+            checks.push(("adc32".into(), false));
+            checks.push(("elfs".into(), false));
+            checks.push(("nfs_mount".into(), false));
+            // Profile constants are static, always pass
+            let profile = SystemType::Sonoma.profile();
+            checks.push(("channels_128".into(), profile.total_channels == 128));
+            checks.push(("transport_ssh".into(), profile.transport == Transport::Ssh));
+            checks.push((
+                "format_hex".into(),
+                profile.pattern_format == PatternFormat::Hex,
+            ));
+            checks.push(("vicor_6".into(), profile.vicor_cores == 6));
+            return Ok(VerifyResult { checks });
+        }
+
+        // 2. Firmware version readable
+        let fw = self.fw_version().await;
+        checks.push(("firmware".into(), fw.is_ok()));
+
+        // 3. XADC responds
+        let xadc = self.read_xadc().await;
+        checks.push(("xadc".into(), xadc.is_ok()));
+
+        // 4. External ADC responds
+        let adc = self.read_adc32().await;
+        checks.push(("adc32".into(), adc.is_ok()));
+
+        // 5. Critical ELFs exist on board
+        let elf_check = self
+            .exec_unlocked(
+                "test -x /mnt/bin/linux_VICOR.elf && \
+                 test -x /mnt/bin/RunSuperVector.elf && \
+                 test -x /mnt/bin/XADC32Ch.elf && \
+                 test -x /mnt/bin/ADC32ChPlusStats.elf && \
+                 echo ok",
+            )
+            .await;
+        checks.push((
+            "elfs".into(),
+            elf_check
+                .map(|r| r.stdout.contains("ok"))
+                .unwrap_or(false),
+        ));
+
+        // 6. Device directory accessible (NFS mount)
+        let nfs = self.exec_unlocked("ls /home/ 2>/dev/null && echo ok").await;
+        checks.push((
+            "nfs_mount".into(),
+            nfs.map(|r| r.stdout.contains("ok")).unwrap_or(false),
+        ));
+
+        // 7. Profile constants
+        let profile = SystemType::Sonoma.profile();
+        checks.push(("channels_128".into(), profile.total_channels == 128));
+        checks.push(("transport_ssh".into(), profile.transport == Transport::Ssh));
+        checks.push((
+            "format_hex".into(),
+            profile.pattern_format == PatternFormat::Hex,
+        ));
+        checks.push(("vicor_6".into(), profile.vicor_cores == 6));
+
+        Ok(VerifyResult { checks })
+    }
+}
+
+// =============================================================================
+// Fleet Orchestration (free function, creates its own clients)
+// =============================================================================
+
+/// Expand IP range string to list of full IPs
+///
+/// "101-104" → ["172.16.0.101", ..., "172.16.0.104"]
+/// "201-244" → ["172.16.0.201", ..., "172.16.0.244"]
+pub fn expand_ip_range(range: &str) -> Result<Vec<String>, String> {
+    let parts: Vec<&str> = range.split('-').collect();
+    if parts.len() != 2 {
+        return Err(format!("Invalid range '{}', expected START-END (e.g., 101-144)", range));
+    }
+    let start: u8 = parts[0]
+        .parse()
+        .map_err(|_| format!("Invalid start '{}' in range", parts[0]))?;
+    let end: u8 = parts[1]
+        .parse()
+        .map_err(|_| format!("Invalid end '{}' in range", parts[1]))?;
+    if start > end {
+        return Err(format!("Start {} > end {} in range", start, end));
+    }
+    Ok((start..=end)
+        .map(|i| format!("172.16.0.{}", i))
+        .collect())
+}
+
+/// Run the same test on multiple boards concurrently
+///
+/// `max_concurrent`: how many boards to run at once (default 4 = one tray)
+pub async fn run_fleet(
+    ips: &[String],
+    config: &TestConfig,
+    user: &str,
+    password: &str,
+    max_concurrent: usize,
+) -> Vec<BoardResult> {
+    stream::iter(ips)
+        .map(|ip: &String| {
+            let cfg = config.clone();
+            let ip = ip.clone();
+            let user = user.to_string();
+            let password = password.to_string();
+            async move {
+                let client = SonomaClient::new(&ip, &user, &password);
+                let start = Instant::now();
+                let result = client.run_test(&cfg).await;
+                let elapsed = start.elapsed();
+                match result {
+                    Ok(test_result) => BoardResult {
+                        ip,
+                        duration_ms: elapsed.as_millis() as u64,
+                        success: test_result.run.passed,
+                        run: Some(test_result.run),
+                        error: None,
+                    },
+                    Err(e) => BoardResult {
+                        ip,
+                        duration_ms: elapsed.as_millis() as u64,
+                        success: false,
+                        run: None,
+                        error: Some(e.to_string()),
+                    },
+                }
+            }
+        })
+        .buffer_unordered(max_concurrent)
+        .collect()
+        .await
 }

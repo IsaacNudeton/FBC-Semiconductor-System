@@ -10,6 +10,7 @@ use crate::fbc::{
     VicorCoreStatus, VicorStatus, BROADCAST_MAC,
 };
 use crate::realtime::{BoardEvent, HeartbeatPacket, LiveBoardState, RealtimeMonitor};
+use crate::sonoma::SonomaConnectionManager;
 use crate::ssh::SshSessionManager;
 use crate::switch::SwitchConfig;
 use byteorder::{BigEndian, ByteOrder};
@@ -42,6 +43,8 @@ pub struct AppState {
     switch_config: Arc<RwLock<SwitchConfig>>,
     /// SSH session manager for fleet terminal
     ssh: Arc<SshSessionManager>,
+    /// Sonoma SSH control manager
+    sonoma: Arc<SonomaConnectionManager>,
 }
 
 impl AppState {
@@ -53,7 +56,13 @@ impl AppState {
             realtime: Arc::new(RealtimeMonitor::new()),
             switch_config: Arc::new(RwLock::new(SwitchConfig::default())),
             ssh: Arc::new(SshSessionManager::new()),
+            sonoma: Arc::new(SonomaConnectionManager::new()),
         }
+    }
+
+    /// Get a reference to the Sonoma connection manager
+    pub fn sonoma(&self) -> &Arc<SonomaConnectionManager> {
+        &self.sonoma
     }
 
     /// Get a reference to the realtime monitor

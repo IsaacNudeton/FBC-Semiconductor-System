@@ -62,7 +62,7 @@ extern "C" {
 
 #define DC_MAX_CH       256
 #define DC_MAX_BANKS     16
-#define DC_MAX_SUPPLIES  16
+#define DC_MAX_SUPPLIES  32
 #define DC_MAX_STEPS     64
 #define DC_MAX_NAME     256
 #define DC_MAX_ERR      512
@@ -79,7 +79,8 @@ typedef enum {
     DC_FILE_TP        = 4,
     DC_FILE_POWER_ON  = 5,
     DC_FILE_POWER_OFF = 6,
-    DC_FILE__COUNT    = 7
+    DC_FILE_PLAN_JSON = 7,  /* FBC test plan JSON (TestPlanDef format) */
+    DC_FILE__COUNT    = 8
 } DcFileType;
 
 /* ═══════════════════════════════════════════════════════════════
@@ -135,6 +136,13 @@ typedef struct {
     char pattern_name[DC_MAX_NAME]; /* "Calibration" */
     char pattern_file[DC_MAX_NAME]; /* "Calibration.atp" */
     int  loop_count;
+    /* FBC plan fields (0 = not set / use defaults) */
+    int  pattern_id;        /* SD pattern index (0-255), -1 = auto-assign by step index */
+    int  duration_secs;     /* per-step duration (0 = single pass) */
+    int  fail_action;       /* 0=abort, 1=continue */
+    int  error_threshold;   /* max errors before fail_action (0 = any) */
+    int  temp_setpoint_dc;  /* 0.1°C units (0 = no change, 0x7FFF sentinel) */
+    int  clock_div;         /* 0-4 freq_sel, -1 = no change (0xFF sentinel) */
 } DcTestStep;
 
 typedef struct {
@@ -192,6 +200,7 @@ int dc_gen_map(const DcTesterProfile *prof, const DcDeviceIR *dev, const char *o
 int dc_gen_lvl(const DcTesterProfile *prof, const DcDeviceIR *dev, const char *output_dir);
 int dc_gen_tim(const DcTesterProfile *prof, const DcDeviceIR *dev, const char *output_dir);
 int dc_gen_tp(const DcTesterProfile *prof, const DcDeviceIR *dev, const char *output_dir);
+int dc_gen_plan_json(const DcTesterProfile *prof, const DcDeviceIR *dev, const char *output_dir);
 int dc_gen_power_on(const DcTesterProfile *prof, const DcDeviceIR *dev, const char *output_dir);
 int dc_gen_power_off(const DcTesterProfile *prof, const DcDeviceIR *dev, const char *output_dir);
 int dc_gen_all(const DcTesterProfile *prof, const DcDeviceIR *dev, const char *output_dir);

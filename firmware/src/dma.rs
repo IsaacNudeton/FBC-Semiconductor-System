@@ -299,6 +299,24 @@ impl FbcStreamer {
         result
     }
 
+    /// Stream from a DDR physical address directly (no OCM copy).
+    /// Used by test plan executor to DMA from DDR vector slots.
+    ///
+    /// # Arguments
+    /// * `ddr_addr` - Physical address in DDR (must be 32-byte aligned)
+    /// * `length` - Number of bytes to transfer
+    pub fn stream_from_ddr(&mut self, ddr_addr: u32, length: u32) -> DmaResult {
+        let aligned_len = (length + 31) & !31;
+
+        let result = self.dma.send_fbc(ddr_addr, aligned_len);
+        if result != DmaResult::Ok {
+            return result;
+        }
+
+        // Longer timeout for large DDR transfers (100M cycles = ~1s at 100MHz)
+        self.dma.wait_mm2s(100_000_000)
+    }
+
     /// Check if streamer is ready for more data
     pub fn is_ready(&self) -> bool {
         self.dma.is_mm2s_idle()

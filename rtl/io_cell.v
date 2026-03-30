@@ -129,14 +129,24 @@ module io_cell #(
     assign pulse_start = pulse_shifted;   // Upper 8 bits (start time)
     assign pulse_end   = pulse_ctrl_bits; // Lower 8 bits (end time) - implicit truncation
 
-    // Pulse state tracking
+    // Local copy of vec_clk_cnt to break long routing from io_bank counter.
+    // One cycle latency — acceptable since pulse timing is relative.
+    reg [7:0] vec_clk_cnt_local;
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn)
+            vec_clk_cnt_local <= 8'd0;
+        else
+            vec_clk_cnt_local <= vec_clk_cnt;
+    end
+
+    // Pulse state tracking (uses local registered copy)
     reg pulse_state;
     always @(posedge clk or negedge resetn) begin
         if (!resetn)
             pulse_state <= 1'b0;
-        else if (pulse_start == vec_clk_cnt)
+        else if (pulse_start == vec_clk_cnt_local)
             pulse_state <= 1'b1;
-        else if (pulse_end == vec_clk_cnt)
+        else if (pulse_end == vec_clk_cnt_local)
             pulse_state <= 1'b0;
     end
 

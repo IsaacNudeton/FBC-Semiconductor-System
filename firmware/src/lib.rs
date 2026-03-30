@@ -41,7 +41,7 @@
 //! - `fbc_protocol` - FBC raw Ethernet protocol (replaces TCP)
 //! - `analog` - Unified 32-channel analog monitor (XADC + MAX11131)
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![allow(dead_code)] // HAL defines all registers, not all used yet
 
 pub mod hal;
@@ -51,8 +51,12 @@ pub mod dma;
 pub mod net;
 pub mod fbc_protocol;
 pub mod analog;
+pub mod board_config;
 pub mod fbc_loader;
 pub mod fbc_decompress;
+pub mod flight_recorder;
+pub mod ddr_slots;
+pub mod testplan;
 
 // Re-export HAL types
 pub use hal::{
@@ -66,8 +70,11 @@ pub use hal::{
     Gic, IRQ_FLAGS, IRQ_FLAG_FBC,
 };
 
+// Re-export board config (EEPROM defaults + host overrides)
+pub use board_config::{BoardConfig, HostOverrides, EffectiveRail, RailViolation, HardwareLimits};
+
 // Re-export analog monitor (application layer)
-pub use analog::{AnalogMonitor, Reading, MonitorError};
+pub use analog::{AnalogMonitor, Reading, MonitorError, Formula as AnalogFormula};
 
 // Re-export commonly used items
 pub use regs::{
@@ -81,6 +88,9 @@ pub use fbc::{FbcOpcode, FbcInstr};
 pub use dma::{AxiDma, FbcStreamer, DmaResult};
 pub use fbc_loader::{FbcLoader, FbcHeader, LoaderError, parse_header, get_clock_freq};
 pub use fbc_decompress::{FbcDecompressor, decompress_to_bytecode, VECTOR_BYTES, MAX_BYTECODE_SIZE};
+pub use flight_recorder::{FlightRecorder, FrHeader, LogEntry, SdHealth};
+pub use ddr_slots::{DdrBuffer, PatternDirectory, PatternEntry, SdHeader, SdLoadError, SdLoadState, LoadProgress, ActiveRegion, MAX_PATTERNS, MAX_SLOTS, SD_PATTERN_DATA_SECTOR};
+pub use testplan::{PlanExecutor, TestPlan, TestStep, FailAction, PlanState, PlanAction, StepResult, PlanCheckpoint, MAX_STEPS, TEMP_NO_CHANGE, CLOCK_NO_CHANGE};
 pub use net::{NetConfig, GemEth};
 
 // Re-export FBC Protocol (raw Ethernet) - primary protocol
@@ -88,8 +98,9 @@ pub use fbc_protocol::{
     FbcProtocolHandler, FbcPacket, FbcHeader as FbcProtoHeader, ControllerState,
     AnnouncePayload, HeartbeatPayload, StatusPayload,
     ConfigPayload, ConfigResult, TelemetryData,
-    PendingVicor, PendingEeprom, PendingFastPins, PendingErrorLog, ErrorLogEntry,
+    PendingVicor, PendingEeprom, PendingFastPins, PendingErrorLog, PendingBoardConfig, PendingSlotUpload, ErrorLogEntry,
     ETHERTYPE_FBC, FBC_MAGIC, MAX_PAYLOAD,
-    setup, runtime, error_log,
+    setup, runtime, error_log, board_config as board_config_cmd,
+    slot, testplan as testplan_cmd,
 };
 

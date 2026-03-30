@@ -51,6 +51,12 @@ pub const VECTOR_BYTES: usize = 20;
 /// When toggles > 15, full encoding is smaller than sparse
 pub const SPARSE_CROSSOVER: usize = 15;
 
+/// Vectors per thermal segment (compile-time profiling)
+pub const THERMAL_SEGMENT_SIZE: u32 = 1024;
+
+/// Header flags
+pub const FLAG_THERMAL_PROFILE: u8 = 0x01; // Thermal profile appended after OP_END
+
 // Opcodes
 pub const OP_NOP: u8 = 0x00;
 pub const OP_VECTOR_FULL: u8 = 0x01;
@@ -347,9 +353,12 @@ impl FbcFile {
 
     /// Write to any writer
     pub fn write_to<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        // Write header (without CRC)
+        // Calculate CRC (hash is computed with crc32 field = 0)
+        let crc = self.calculate_crc();
+
+        // Write header with correct CRC
         let mut header = self.header;
-        header.crc32 = 0;
+        header.crc32 = crc;
         header.write_to(w)?;
 
         // Write pin config
@@ -420,7 +429,7 @@ impl FbcFile {
             1.0
         };
 
-        // Count opcodes
+        // Count opcodes (stop at OP_END — thermal profile follows)
         let mut op_counts = [0usize; 8];
         let mut i = 0;
         while i < self.data.len() {
@@ -431,7 +440,8 @@ impl FbcFile {
 
             // Skip payload
             i += match op {
-                OP_NOP | OP_VECTOR_ZERO | OP_VECTOR_ONES | OP_END => 1,
+                OP_END => { break; } // thermal profile after this
+                OP_NOP | OP_VECTOR_ZERO | OP_VECTOR_ONES => 1,
                 OP_VECTOR_FULL | OP_VECTOR_XOR => 1 + VECTOR_BYTES,
                 OP_VECTOR_SPARSE => {
                     if i + 1 < self.data.len() {
@@ -482,6 +492,157 @@ impl std::fmt::Display for FbcStats {
             if count > 0 {
                 writeln!(f, "    {:8}: {:>10}", names[i], count)?;
             }
+        }
+        Ok(())
+    }
+}
+
+/// Thermal power level (matches firmware thermal.rs PowerLevel)
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThermalPowerLevel {
+    Low = 0,
+    Medium = 1,
+    High = 2,
+}
+
+impl From<u8> for ThermalPowerLevel {
+    fn from(val: u8) -> Self {
+        match val {
+            1 => ThermalPowerLevel::Medium,
+            2 => ThermalPowerLevel::High,
+            _ => ThermalPowerLevel::Low,
+        }
+    }
+}
+
+/// Compile-time thermal profile segment (8 bytes)
+///
+/// Generated during pattern compression by analyzing XOR + popcount
+/// of consecutive vectors. Firmware loads this at .fbc load time to
+/// build a feedforward schedule — pre-compensates for vector-induced
+/// DUT heating BEFORE the vectors fire.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct ThermalSegment {
+    /// Starting vector index of this segment
+    pub vector_offset: u32,
+    /// Average toggle rate per vector (0-160)
+    pub avg_toggle_rate: u8,
+    /// Average active pins per vector (0-160)
+    pub avg_active_pins: u8,
+    /// Classified power level
+    pub power_level: ThermalPowerLevel,
+    pub _reserved: u8,
+}
+
+/// Compile-time thermal profile for an .fbc file
+#[derive(Debug, Clone)]
+pub struct ThermalProfile {
+    pub segments: Vec<ThermalSegment>,
+}
+
+impl ThermalProfile {
+    /// Parse thermal profile from bytes after OP_END
+    pub fn from_bytes(data: &[u8], segment_count: u32) -> Option<Self> {
+        let expected = segment_count as usize * 8;
+        if data.len() < expected {
+            return None;
+        }
+
+        let mut segments = Vec::with_capacity(segment_count as usize);
+        for i in 0..segment_count as usize {
+            let offset = i * 8;
+            let vector_offset = u32::from_le_bytes([
+                data[offset], data[offset + 1], data[offset + 2], data[offset + 3],
+            ]);
+            segments.push(ThermalSegment {
+                vector_offset,
+                avg_toggle_rate: data[offset + 4],
+                avg_active_pins: data[offset + 5],
+                power_level: ThermalPowerLevel::from(data[offset + 6]),
+                _reserved: 0,
+            });
+        }
+
+        Some(ThermalProfile { segments })
+    }
+
+    /// Serialize to bytes
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.segments.len() * 8);
+        for seg in &self.segments {
+            out.extend_from_slice(&seg.vector_offset.to_le_bytes());
+            out.push(seg.avg_toggle_rate);
+            out.push(seg.avg_active_pins);
+            out.push(seg.power_level as u8);
+            out.push(0); // reserved
+        }
+        out
+    }
+}
+
+impl FbcFile {
+    /// Check if this file has a thermal profile
+    pub fn has_thermal_profile(&self) -> bool {
+        self.header.flags & FLAG_THERMAL_PROFILE != 0
+    }
+
+    /// Get segment count from reserved header bytes
+    pub fn thermal_segment_count(&self) -> u32 {
+        if !self.has_thermal_profile() {
+            return 0;
+        }
+        u32::from_le_bytes([
+            self.header._reserved[0],
+            self.header._reserved[1],
+            self.header._reserved[2],
+            self.header._reserved[3],
+        ])
+    }
+
+    /// Extract thermal profile from compressed data (after OP_END)
+    pub fn thermal_profile(&self) -> Option<ThermalProfile> {
+        if !self.has_thermal_profile() {
+            return None;
+        }
+
+        let seg_count = self.thermal_segment_count();
+        if seg_count == 0 {
+            return None;
+        }
+
+        // Walk opcodes to find OP_END (can't just scan for 0x07 — it appears in payloads)
+        let mut pos = 0;
+        while pos < self.data.len() {
+            let op = self.data[pos];
+            match op {
+                OP_END => {
+                    let profile_data = &self.data[pos + 1..];
+                    return ThermalProfile::from_bytes(profile_data, seg_count);
+                }
+                OP_NOP | OP_VECTOR_ZERO | OP_VECTOR_ONES => { pos += 1; }
+                OP_VECTOR_FULL | OP_VECTOR_XOR => { pos += 1 + VECTOR_BYTES; }
+                OP_VECTOR_SPARSE => {
+                    if pos + 1 >= self.data.len() { return None; }
+                    let count = self.data[pos + 1] as usize;
+                    pos += 1 + 1 + count;
+                }
+                OP_VECTOR_RUN => { pos += 1 + 4; }
+                _ => { pos += 1; }
+            }
+        }
+        None
+    }
+}
+
+impl std::fmt::Display for ThermalProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "Thermal Profile ({} segments):", self.segments.len())?;
+        for seg in &self.segments {
+            writeln!(f, "  vec {:>8}: toggles={:>3} active={:>3} power={:?}",
+                seg.vector_offset, seg.avg_toggle_rate, seg.avg_active_pins,
+                seg.power_level)?;
         }
         Ok(())
     }

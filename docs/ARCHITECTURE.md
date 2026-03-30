@@ -1,7 +1,7 @@
 # FBC Semiconductor System — Architecture
 
-**Last Verified:** March 2026 (First Light)
-**Status:** ✅ Complete (PL programmed, PS firmware running)
+**Last Verified:** March 26, 2026
+**Status:** ✅ Complete (PL programmed, PS firmware running, GUI restructured)
 
 ---
 
@@ -12,7 +12,7 @@ FBC (Force Burn-in Controller) is a modernized semiconductor burn-in test system
 - **Bare-metal Rust firmware** — No OS, <1s boot time
 - **Custom FPGA toolchain** — ONETWO-derived, no Vivado required
 - **Raw Ethernet protocol** — EtherType 0x88B5, no TCP/IP overhead
-- **Modern GUI** — Tauri + React + Three.js
+- **Native GPU GUI** — wgpu + winit (7.4MB binary, 8 deps, immediate-mode, 4-tab production layout)
 
 **Scale:** ~44 Zynq 7020 boards per rack, each controlling 160 GPIO pins (128 BIM + 32 fast).
 
@@ -24,7 +24,7 @@ FBC (Force Burn-in Controller) is a modernized semiconductor burn-in test system
 ┌─────────────────────────────────────────────────────────────────┐
 │                        HOST PC                                  │
 │  ┌────────────────┐                                             │
-│  │  FBC GUI       │  (Tauri + React + Three.js)                │
+│  │  FBC GUI       │  (Native wgpu, app/)                       │
 │  │  (Raw Ethernet)│────────────────────┐                        │
 │  └────────────────┘                    │                        │
 └────────────────────────────────────────┼────────────────────────┘
@@ -65,13 +65,13 @@ gui/src-tauri/c-engine/pc/ (C engine)
     │
     ├──▶ .hex + .seq ✅ (Legacy format, 40 bytes/vector)
     │
-    └──▶ .fbc ❌ (MISSING — see docs/MIGRATION.md)
+    └──▶ .fbc ✅ (FIXED March 2026 — gen_fbc.c integrated)
 ```
 
 ### 2. Test Execution
 
 ```
-GUI (Tauri)
+GUI (app/fbc-app)
     │
     │ Raw Ethernet (0x88B5)
     │ Commands: UPLOAD_VECTORS, START, STATUS_REQ, etc.
@@ -133,7 +133,7 @@ GUI displays error details
 | Component | Status | Notes |
 |-----------|--------|-------|
 | **Bitstream** | ✅ PROGRAMMED | Loaded via JTAG |
-| **AXI Peripherals** | ✅ WIRED | All 6 peripherals instantiated |
+| **AXI Peripherals** | ✅ WIRED | All 8 peripherals (including device_dna + fbc_dma) |
 | **DMA** | ✅ WIRED | `fbc_dma.v` at 0x4040_0000 |
 | **Error BRAMs** | ✅ WIRED | 3× BRAMs at 0x4009_0000 |
 | **Fast Error** | ✅ WIRED | Wired through `axi_fbc_ctrl` at 0x2C |
@@ -146,17 +146,61 @@ GUI displays error details
 | **Ethernet** | ✅ WORKING | GEM0 initialized, ANNOUNCE packet sent |
 | **VICOR GPIO** | ✅ FIXED | SLCR MIO configured (`main.rs:61-78`) |
 | **HAL Drivers** | ✅ READY | 17 drivers in `hal/` |
-| **FBC Protocol** | ✅ READY | 28 commands implemented |
+| **FBC Protocol** | ✅ READY | 63 commands across 11 subsystems |
+| **Thermal v2** | ✅ DEPLOYED | P+I(crystallization)+D+feedforward, wired into main loop |
+| **Device DNA** | ✅ VERIFIED | Unique MAC per silicon: `00:0A:35:C6:B4:2A` |
 
-### GUI (Tauri + React)
+### GUI — Native wgpu (app/)
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **Protocol Client** | ✅ READY | `gui/src-tauri/src/fbc.rs` |
-| **State Machine** | ✅ READY | `gui/src-tauri/src/state.rs` |
-| **Pattern Converter** | ✅ COMPLETE | `gen_fbc.c` added March 2026, outputs `.fbc` |
-| **Device Config** | ✅ READY | Generates PIN_MAP, .map, .lvl, etc. |
-| **Real-time Monitor** | ✅ READY | Heartbeat listener, telemetry |
+| **Window + GPU** | ✅ BUILT | wgpu DX12, winit 0.30, 7.4MB release binary |
+| **UI Widgets** | ✅ BUILT | 22 widgets: button, toggle, slider, text_input, tabs, table, card, badge, progress, scroll_area, checkbox, target_selector, etc. |
+| **4-Tab Layout** | ✅ BUILT | Dashboard, Profiling, Engineering, Datalogs — 14 sub-panels total |
+| **Sidebar Board Tree** | ✅ BUILT | System → Shelf(11) → Tray(front/rear) → Board with status dots, collapsible shelves |
+| **14 Panels** | ✅ BUILT | Overview, Power, Analog, Vectors, Board, Device, Terminal, EEPROM, TestPlan, Firmware, Pattern, Facility, Waveform, **Datalogs** (new) |
+| **Transport** | ✅ WIRED | HwCommand/HwResponse → FbcClient + SonomaClient dispatch on tokio thread |
+| **Pattern Converter** | ✅ COMPLETE | C engine FFI linked (166 tests) |
+
+#### 4-Tab Architecture
+
+```
+┌─ Sidebar (240px) ─┬─ Content ──────────────────────────────────────┐
+│ FBC System         │ [Dashboard] [Profiling] [Engineering] [Datalogs] │
+│ ● Connected        │                                                 │
+│                    │ Sub-tabs: [Overview] [Facility] [Board]         │
+│ BOARDS (44)        │                                                 │
+│ ▼ Shelf 1          │ ┌──────────────────────────────────────────┐   │
+│   ● Board 101      │ │                                          │   │
+│   ○ Board 102      │ │          Active Panel Content             │   │
+│   ● Board 103      │ │                                          │   │
+│   ○ Board 104      │ │                                          │   │
+│ ▶ Shelf 2          │ │                                          │   │
+│ ▶ Shelf 3          │ └──────────────────────────────────────────┘   │
+│ ...                │                                                 │
+│                    │                                                 │
+│ ALERTS             │                                                 │
+│ ▲ Board 103: ERR   │                                                 │
+└────────────────────┴─────────────────────────────────────────────────┘
+```
+
+**Tab → Sub-panel mapping:**
+| Tab | Sub-panels | Purpose |
+|-----|-----------|---------|
+| Dashboard | Overview, Facility, Board | System status, rack layout, board detail |
+| Profiling | Pattern, Device, TestPlan | Pre-test: convert patterns, create device config, build test plans |
+| Engineering | Terminal, Power, Analog, Vectors, EEPROM, Firmware, Waveform | Direct hardware control |
+| Datalogs | Datalogs | LOT summaries, anomaly detection, export (PDF/CSV/JSON) |
+
+**Sidebar board tree:** Sonoma IPs → shelf/tray (101-144=front, 201-244=rear, 4 boards per tray). FBC boards indexed sequentially. Socket notation: C1/C2/C3/C4 per board. Status dots: green=alive, red=error, gray=disconnected.
+
+### GUI — Legacy Tauri+React (gui/) — SUPERSEDED
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| **Protocol Client** | ✅ WAS READY | `gui/src-tauri/src/fbc.rs` — replaced by `app/src/transport.rs` |
+| **State Machine** | ✅ WAS READY | `gui/src-tauri/src/state.rs` — replaced by `app/src/state.rs` |
+| **Device Config** | ✅ WAS READY | Generates PIN_MAP, .map, .lvl, etc. |
 
 ---
 
@@ -196,8 +240,9 @@ clk_gen.v (MMCM)
 | `io_config` | 0x4005_0000 | 4KB | Pin type configuration |
 | `axi_vector_status` | 0x4006_0000 | 4KB | Vector execution status |
 | `axi_freq_counter` | 0x4007_0000 | 4KB | 8-channel frequency counter |
-| `clk_ctrl` | 0x4008_0000 | 4KB | Clock control (freq_sel) |
+| `clk_ctrl` | 0x4008_0000 | 4KB | Clock control (freq_sel) — ✅ FIXED March 25 |
 | `error_bram` | 0x4009_0000 | 4KB | Error logging BRAMs (×3) |
+| `axi_device_dna` | 0x400A_0000 | 4KB | 57-bit silicon DNA (unique MAC) — ✅ Added March 25 |
 | `fbc_dma` | 0x4040_0000 | 4KB | AXI DMA (HP0 master) |
 
 ### FPGA Address Decode
@@ -314,13 +359,20 @@ GND  │ 13  14  │  n_SRST
 | `CLAUDE.md` | Ground truth, hardware status |
 | `docs/HARDWARE.md` | Hardware status, pinouts, power |
 | `docs/FIRMWARE.md` | Firmware architecture |
-| `docs/PROTOCOL.md` | FBC protocol spec |
+| `docs/PROTOCOL.md` | FBC protocol spec (28 commands) |
+| `docs/register_map.md` | AXI register details |
 | `docs/MIGRATION.md` | Legacy → FBC migration guide |
 | `docs/GAPS.md` | Known gaps and implementation plans |
+| `docs/TOOLING.md` | Complete tooling inventory |
+| `docs/FIRST_LIGHT_SESSION.md` | Historical record |
+| `SONOMA-INSTRUCTIONS.md` | Sonoma CLI orchestration tasks |
+| `docs/reference/` | PIN_MAPPING, VICOR_ADC_DAC, FSBL_DDR, PL_AUDIT |
 
 ---
 
 **Next Steps:**
-1. Test AXI register access (all 6 peripherals)
-2. Run simple vector, verify GPIO toggling
-3. Test firmware update pipeline (BEGIN/CHUNK/COMMIT)
+1. First vector run — upload `bringup_fast_pins.fbc` (102 vectors), verify GPIO toggling
+2. CLI: Full burn-in flow — configure → upload → run → wait_done → errors → export
+3. CLI: Multi-board orchestration — discover N boards, run same test on all
+4. GUI: Wire real data into placeholder panels, port C engine FFI to app/
+5. GUI: File dialogs (rfd crate) for pattern/firmware/testplan loading

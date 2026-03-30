@@ -285,7 +285,7 @@ enum FbcCommands {
         enable: String,
     },
 
-    /// Write EEPROM data
+    /// Write EEPROM data (raw bytes at offset)
     EepromWrite {
         /// Board MAC address
         mac: String,
@@ -295,6 +295,25 @@ enum FbcCommands {
         /// Hex data to write (e.g. 'DEADBEEF')
         #[arg(long, help = "Hex data to write (e.g. 'DEADBEEF')")]
         data: String,
+    },
+
+    /// Write full BIM EEPROM image (256 bytes, validated)
+    WriteBim {
+        /// Board MAC address
+        mac: String,
+        /// Path to 256-byte BIM binary file
+        #[arg(short, long)]
+        file: PathBuf,
+    },
+
+    /// Set PMBus channel voltage
+    PmbusSetVoltage {
+        /// Board MAC address
+        mac: String,
+        /// PMBus channel number (1-24)
+        channel: u8,
+        /// Voltage in millivolts
+        mv: u16,
     },
 
     /// Update firmware
@@ -320,6 +339,89 @@ enum FbcCommands {
         #[arg(long, help = "SD card sector number")]
         sector: u32,
     },
+
+    /// Format SD card (erases all flight recorder data)
+    SdFormat {
+        /// Board MAC address
+        mac: String,
+    },
+
+    /// Repair corrupted SD card (non-destructive recovery)
+    SdRepair {
+        /// Board MAC address
+        mac: String,
+    },
+
+    /// Record all packets from a board to a binary datalog file
+    Record {
+        /// Board MAC address
+        mac: String,
+        /// Output file path (.fbd)
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Stop after N seconds (0 = until Ctrl+C)
+        #[arg(short, long, default_value = "0")]
+        duration: u64,
+    },
+
+    /// Inspect a binary datalog file
+    DatalogInfo {
+        /// Path to .fbd file
+        file: PathBuf,
+        /// Verify CRC integrity
+        #[arg(long)]
+        verify: bool,
+    },
+
+    /// Upload .fbc file to a DDR slot (persistent, survives warm reset)
+    SlotUpload {
+        /// Board MAC address
+        mac: String,
+        /// Slot number (0-7)
+        slot: u8,
+        /// FBC vector file
+        file: PathBuf,
+    },
+
+    /// Show DDR slot status (all 8 slots)
+    SlotStatus {
+        /// Board MAC address (or "all")
+        #[arg(default_value = "all")]
+        target: String,
+    },
+
+    /// Invalidate DDR slot(s)
+    SlotInvalidate {
+        /// Board MAC address
+        mac: String,
+        /// Slot number (0-7), or 255 for all
+        #[arg(default_value = "255")]
+        slot: u8,
+    },
+
+    /// Upload a test plan to the board
+    SetPlan {
+        /// Board MAC address
+        mac: String,
+        /// Path to test plan JSON file
+        plan: PathBuf,
+    },
+
+    /// Start executing the loaded test plan
+    RunPlan {
+        /// Board MAC address
+        mac: String,
+    },
+
+    /// Get test plan execution status
+    PlanStatus {
+        /// Board MAC address (or "all")
+        #[arg(default_value = "all")]
+        target: String,
+    },
+
+    /// Listen for all raw FBC packets (boot logs, heartbeats, announces)
+    Listen,
 
     /// Monitor running boards with live updates
     Monitor {
@@ -539,6 +641,35 @@ enum SonomaCommands {
         /// Command to execute
         cmd: String,
     },
+
+    /// Run a complete burn-in test (orchestrates all 20 methods)
+    RunTest {
+        /// Board IP address
+        ip: String,
+        /// Path to test config JSON file
+        config: PathBuf,
+    },
+
+    /// Verify board matches Sonoma profile
+    Verify {
+        /// Board IP address
+        ip: String,
+    },
+
+    /// Run same test on multiple boards concurrently
+    Fleet {
+        /// IP range (e.g., "101-104" or "101-144")
+        #[arg(long)]
+        range: Option<String>,
+        /// Specific board IPs, comma-separated (e.g., "101,102,103")
+        #[arg(long)]
+        boards: Option<String>,
+        /// Path to test config JSON file
+        config: PathBuf,
+        /// Max concurrent boards (default 4 = one tray)
+        #[arg(long, default_value = "4")]
+        concurrent: usize,
+    },
 }
 
 // =============================================================================
@@ -666,6 +797,72 @@ fn main() -> anyhow::Result<()> {
 // =============================================================================
 // FBC Command Runner
 // =============================================================================
+
+fn fbc_cmd_name(cmd: u8) -> &'static str {
+    use fbc_host::fbc_protocol::*;
+    match cmd {
+        setup::ANNOUNCE => "ANNOUNCE",
+        setup::BIM_STATUS_REQ => "BIM_STATUS_REQ",
+        setup::BIM_STATUS_RSP => "BIM_STATUS_RSP",
+        setup::WRITE_BIM => "WRITE_BIM",
+        setup::UPLOAD_VECTORS => "UPLOAD_VECTORS",
+        setup::CONFIGURE => "CONFIGURE",
+        runtime::START => "START",
+        runtime::STOP => "STOP",
+        runtime::RESET => "RESET",
+        runtime::HEARTBEAT => "HEARTBEAT",
+        runtime::ERROR => "ERROR",
+        runtime::STATUS_REQ => "STATUS_REQ",
+        runtime::STATUS_RSP => "STATUS_RSP",
+        error_log::ERROR_LOG_REQ => "ERROR_LOG_REQ",
+        error_log::ERROR_LOG_RSP => "ERROR_LOG_RSP",
+        flight_recorder::LOG_READ_REQ => "LOG_READ_REQ",
+        flight_recorder::LOG_READ_RSP => "LOG_READ_RSP",
+        flight_recorder::LOG_INFO_REQ => "LOG_INFO_REQ",
+        flight_recorder::LOG_INFO_RSP => "LOG_INFO_RSP",
+        analog::READ_ALL_REQ => "ANALOG_REQ",
+        analog::READ_ALL_RSP => "ANALOG_RSP",
+        power::VICOR_STATUS_REQ => "VICOR_STATUS_REQ",
+        power::VICOR_STATUS_RSP => "VICOR_STATUS_RSP",
+        power::VICOR_ENABLE => "VICOR_ENABLE",
+        power::VICOR_SET_VOLTAGE => "VICOR_SET_VOLTAGE",
+        power::EMERGENCY_STOP => "EMERGENCY_STOP",
+        power::POWER_SEQUENCE_ON => "POWER_SEQ_ON",
+        power::POWER_SEQUENCE_OFF => "POWER_SEQ_OFF",
+        eeprom::READ_REQ => "EEPROM_READ",
+        eeprom::READ_RSP => "EEPROM_RSP",
+        eeprom::WRITE => "EEPROM_WRITE",
+        eeprom::WRITE_ACK => "EEPROM_ACK",
+        vector_engine::STATUS_REQ => "VEC_STATUS_REQ",
+        vector_engine::STATUS_RSP => "VEC_STATUS_RSP",
+        vector_engine::LOAD => "VEC_LOAD",
+        vector_engine::LOAD_ACK => "VEC_LOAD_ACK",
+        vector_engine::START => "VEC_START",
+        vector_engine::PAUSE => "VEC_PAUSE",
+        vector_engine::RESUME => "VEC_RESUME",
+        vector_engine::STOP => "VEC_STOP",
+        slot::UPLOAD_TO_SLOT => "SLOT_UPLOAD",
+        slot::SLOT_STATUS_REQ => "SLOT_STATUS_REQ",
+        slot::SLOT_STATUS_RSP => "SLOT_STATUS_RSP",
+        slot::INVALIDATE => "SLOT_INVALIDATE",
+        testplan::SET_PLAN => "SET_PLAN",
+        testplan::SET_PLAN_ACK => "SET_PLAN_ACK",
+        testplan::RUN_PLAN => "RUN_PLAN",
+        testplan::RUN_PLAN_ACK => "RUN_PLAN_ACK",
+        testplan::PLAN_STATUS_REQ => "PLAN_STATUS_REQ",
+        testplan::PLAN_STATUS_RSP => "PLAN_STATUS_RSP",
+        testplan::STEP_RESULT => "STEP_RESULT",
+        fastpins::READ_REQ => "FASTPINS_READ",
+        fastpins::READ_RSP => "FASTPINS_RSP",
+        fastpins::WRITE => "FASTPINS_WRITE",
+        firmware::INFO_REQ => "FW_INFO_REQ",
+        firmware::INFO_RSP => "FW_INFO_RSP",
+        firmware::BEGIN => "FW_BEGIN",
+        firmware::CHUNK => "FW_CHUNK",
+        firmware::COMMIT => "FW_COMMIT",
+        _ => "UNKNOWN",
+    }
+}
 
 fn run_fbc_command(interface: &str, cmd: FbcCommands, json: bool) -> anyhow::Result<()> {
     match cmd {
@@ -1215,6 +1412,38 @@ fn run_fbc_command(interface: &str, cmd: FbcCommands, json: bool) -> anyhow::Res
             }
         }
 
+        FbcCommands::WriteBim { mac, file } => {
+            let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
+            let data = std::fs::read(&file)
+                .map_err(|e| anyhow::anyhow!("Failed to read BIM file: {}", e))?;
+            if data.len() != 256 {
+                anyhow::bail!("BIM file must be exactly 256 bytes, got {}", data.len());
+            }
+            let mut bim_data = [0u8; 256];
+            bim_data.copy_from_slice(&data);
+            let mut client = FbcClient::new(interface)?;
+            if !json {
+                println!("Writing BIM image to {}...", format_mac(&mac));
+            }
+            client.write_bim(&mac, &bim_data)?;
+            if json {
+                println!(r#"{{"status":"ok","bytes":256}}"#);
+            } else {
+                println!("BIM EEPROM programmed successfully (256 bytes)");
+            }
+        }
+
+        FbcCommands::PmbusSetVoltage { mac, channel, mv } => {
+            let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
+            let mut client = FbcClient::new(interface)?;
+            client.pmbus_set_voltage(&mac, channel, mv)?;
+            if json {
+                println!(r#"{{"status":"ok","channel":{},"voltage_mv":{}}}"#, channel, mv);
+            } else {
+                println!("PMBus ch{} set to {}mV", channel, mv);
+            }
+        }
+
         FbcCommands::FirmwareUpdate { mac, file } => {
             let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
             // Read firmware file
@@ -1244,15 +1473,15 @@ fn run_fbc_command(interface: &str, cmd: FbcCommands, json: bool) -> anyhow::Res
             let mut client = FbcClient::new(interface)?;
             let info = client.get_log_info(&mac)?;
             if json {
-                println!(r#"{{"mac":"{}","sd_present":{},"boot_sector":{},"log_start":{},"log_end":{},"current_index":{},"total_entries":{}}}"#,
-                    format_mac(&mac), info.sd_present, info.boot_sector, info.log_start,
-                    info.log_end, info.current_index, info.total_entries);
+                println!(r#"{{"mac":"{}","sd_present":{},"sd_health":"{}","data_start":{},"capacity":{},"current_index":{},"total_entries":{}}}"#,
+                    format_mac(&mac), info.sd_present, info.sd_health.label(),
+                    info.data_start, info.capacity, info.current_index, info.total_entries);
             } else {
                 println!("{} — Flight Recorder:", format_mac(&mac));
                 println!("  SD Present:    {}", if info.sd_present { "yes" } else { "no" });
-                println!("  Boot Sector:   {}", info.boot_sector);
-                println!("  Log Start:     {}", info.log_start);
-                println!("  Log End:       {}", info.log_end);
+                println!("  SD Health:     {}", info.sd_health.label());
+                println!("  Data Start:    sector {}", info.data_start);
+                println!("  Capacity:      {} entries", info.capacity);
                 println!("  Current Index: {}", info.current_index);
                 println!("  Total Entries: {}", info.total_entries);
             }
@@ -1277,6 +1506,282 @@ fn run_fbc_command(interface: &str, cmd: FbcCommands, json: bool) -> anyhow::Res
                         sector as usize * 512 + i * 16,
                         hex.join(" "),
                         ascii);
+                }
+            }
+        }
+
+        FbcCommands::SdFormat { mac } => {
+            let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
+            let mut client = FbcClient::new(interface)?;
+            let ok = client.sd_format(&mac)?;
+            if json {
+                println!(r#"{{"mac":"{}","status":"{}"}}"#, format_mac(&mac), if ok { "ok" } else { "error" });
+            } else if ok {
+                println!("{} — SD card formatted successfully", format_mac(&mac));
+            } else {
+                println!("{} — SD card format FAILED", format_mac(&mac));
+            }
+        }
+
+        FbcCommands::SdRepair { mac } => {
+            let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
+            let mut client = FbcClient::new(interface)?;
+            let (ok, health) = client.sd_repair(&mac)?;
+            if json {
+                println!(r#"{{"mac":"{}","status":"{}","health":"{}"}}"#,
+                    format_mac(&mac), if ok { "ok" } else { "error" }, health.label());
+            } else if ok {
+                println!("{} — SD card repair complete: {}", format_mac(&mac), health.label());
+            } else {
+                println!("{} — SD card repair FAILED: {}", format_mac(&mac), health.label());
+            }
+        }
+
+        FbcCommands::Record { mac, output, duration } => {
+            let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
+            let mut client = FbcClient::new(interface)?;
+
+            let output_str = output.to_string_lossy().to_string();
+            let mut writer = fbc_host::datalog::DatalogWriter::create(&output_str, &mac, 0)?;
+
+            if !json {
+                println!("Recording packets from {} to {}", format_mac(&mac), output.display());
+                if duration > 0 {
+                    println!("Duration: {}s", duration);
+                } else {
+                    println!("Press Ctrl+C to stop.");
+                }
+            }
+
+            let start = Instant::now();
+            let timeout_dur = if duration > 0 { Some(Duration::from_secs(duration)) } else { None };
+
+            loop {
+                if let Some(td) = timeout_dur {
+                    if start.elapsed() > td { break; }
+                }
+
+                // Poll status (captures STATUS_RSP)
+                if let Ok(Some((src, pkt))) = client.recv_any() {
+                    if src == mac {
+                        writer.write_packet(&pkt).map_err(|e| anyhow::anyhow!("Write error: {}", e))?;
+                    }
+                }
+
+                // Also actively request status every ~1s
+                if writer.record_count() == 0 || start.elapsed().as_millis() as u32 % 1000 < 10 {
+                    if let Ok(status) = client.get_status(&mac) {
+                        // Status is captured via the recv path above
+                        let _ = status;
+                    }
+                }
+            }
+
+            let count = writer.finalize().map_err(|e| anyhow::anyhow!("Finalize error: {}", e))?;
+            if json {
+                println!(r#"{{"status":"ok","records":{},"file":"{}"}}"#, count, output.display());
+            } else {
+                println!("Recorded {} packets to {}", count, output.display());
+            }
+        }
+
+        FbcCommands::DatalogInfo { file, verify } => {
+            let path = file.to_string_lossy().to_string();
+            let reader = fbc_host::datalog::DatalogReader::open(&path)
+                .map_err(|e| anyhow::anyhow!("Failed to open datalog: {}", e))?;
+            let hdr = reader.header();
+
+            if json {
+                println!(r#"{{"version":{},"mac":"{}","start_epoch":{},"plan_hash":"0x{:08X}","records":{}}}"#,
+                    hdr.version,
+                    format_mac(&hdr.board_mac),
+                    hdr.test_start_epoch,
+                    hdr.plan_hash,
+                    reader.record_count());
+            } else {
+                println!("FBC Datalog: {}", file.display());
+                println!("  Version:    {}", hdr.version);
+                println!("  Board MAC:  {}", format_mac(&hdr.board_mac));
+                println!("  Test Start: {} (epoch)", hdr.test_start_epoch);
+                println!("  Plan Hash:  0x{:08X}", hdr.plan_hash);
+                println!("  Records:    {}", reader.record_count());
+
+                if verify {
+                    print!("  CRC Check:  ");
+                    match reader.verify_crc() {
+                        Ok(true) => println!("PASS"),
+                        Ok(false) => println!("FAIL"),
+                        Err(e) => println!("ERROR: {}", e),
+                    }
+                }
+            }
+        }
+
+        FbcCommands::SlotUpload { mac, slot, file } => {
+            let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
+            if slot > 7 { anyhow::bail!("Slot must be 0-7"); }
+            let data = std::fs::read(&file)?;
+            let mut client = FbcClient::new(interface)?;
+            if !json { println!("Uploading {} ({} bytes) to slot {}...", file.display(), data.len(), slot); }
+            client.upload_to_slot(&mac, slot, &data)?;
+            if json {
+                println!(r#"{{"status":"ok","slot":{},"bytes":{}}}"#, slot, data.len());
+            } else {
+                println!("Slot {} upload complete ({} bytes).", slot, data.len());
+            }
+        }
+
+        FbcCommands::SlotStatus { target } => {
+            let mut client = FbcClient::new(interface)?;
+            let targets = resolve_targets(&mut client, &target)?;
+
+            for mac in &targets {
+                match client.get_slot_status(mac) {
+                    Ok(status) => {
+                        if json {
+                            let slots: Vec<String> = status.slots.iter().map(|s| {
+                                format!(r#"{{"id":{},"flags":{},"valid":{},"loaded":{},"vectors":{},"size":{},"clock":{}}}"#,
+                                    s.slot_id, s.flags, s.is_valid(), s.is_loaded(),
+                                    s.num_vectors, s.fbc_size, s.vec_clock_hz)
+                            }).collect();
+                            println!(r#"{{"mac":"{}","slots":[{}]}}"#, format_mac(mac), slots.join(","));
+                        } else {
+                            println!("{} — DDR Slots:", format_mac(mac));
+                            println!("  {:>4} {:>6} {:>6} {:>10} {:>10} {:>10}",
+                                "Slot", "Valid", "Loaded", "Vectors", "Size", "Clock");
+                            for s in &status.slots {
+                                println!("  {:>4} {:>6} {:>6} {:>10} {:>10} {:>10}",
+                                    s.slot_id,
+                                    if s.is_valid() { "yes" } else { "-" },
+                                    if s.is_loaded() { "yes" } else { "-" },
+                                    if s.is_valid() { format!("{}", s.num_vectors) } else { "-".to_string() },
+                                    if s.is_valid() { format!("{}", s.fbc_size) } else { "-".to_string() },
+                                    if s.is_valid() { format!("{}", s.vec_clock_hz) } else { "-".to_string() },
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        if !json { eprintln!("Error {}: {}", format_mac(mac), e); }
+                    }
+                }
+            }
+        }
+
+        FbcCommands::SlotInvalidate { mac, slot } => {
+            let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
+            if slot > 7 && slot != 255 { anyhow::bail!("Slot must be 0-7 or 255 (all)"); }
+            let mut client = FbcClient::new(interface)?;
+            client.invalidate_slot(&mac, slot)?;
+            if json {
+                println!(r#"{{"status":"ok","slot":{}}}"#, slot);
+            } else if slot == 255 {
+                println!("All DDR slots invalidated.");
+            } else {
+                println!("Slot {} invalidated.", slot);
+            }
+        }
+
+        FbcCommands::SetPlan { mac, plan } => {
+            let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
+            let plan_json = std::fs::read_to_string(&plan)?;
+            let plan_def: fbc_host::types::TestPlanDef = serde_json::from_str(&plan_json)
+                .map_err(|e| anyhow::anyhow!("Invalid plan JSON: {}", e))?;
+            if plan_def.steps.is_empty() {
+                anyhow::bail!("Plan has no steps");
+            }
+            let mut client = FbcClient::new(interface)?;
+            if !json {
+                println!("Setting plan: {} steps, loop_start={}, duration={}s",
+                    plan_def.num_steps, plan_def.loop_start, plan_def.total_duration_secs);
+            }
+            client.set_test_plan(&mac, &plan_def)?;
+            if json {
+                println!(r#"{{"status":"ok","steps":{}}}"#, plan_def.num_steps);
+            } else {
+                println!("Plan set successfully.");
+            }
+        }
+
+        FbcCommands::RunPlan { mac } => {
+            let mac = parse_mac(&mac).ok_or_else(|| anyhow::anyhow!("Invalid MAC"))?;
+            let mut client = FbcClient::new(interface)?;
+            client.run_test_plan(&mac)?;
+            if json {
+                println!(r#"{{"status":"ok"}}"#);
+            } else {
+                println!("Test plan started.");
+            }
+        }
+
+        FbcCommands::PlanStatus { target } => {
+            let mut client = FbcClient::new(interface)?;
+            let targets = resolve_targets(&mut client, &target)?;
+
+            for mac in &targets {
+                match client.get_plan_status(mac) {
+                    Ok(ps) => {
+                        if json {
+                            println!(r#"{{"mac":"{}","state":"{}","step":{}/{},"loops":{},"elapsed_s":{},"errors":{}}}"#,
+                                format_mac(mac), ps.state, ps.current_step, ps.total_steps,
+                                ps.loop_count, ps.elapsed_secs, ps.total_errors);
+                        } else {
+                            println!("{}: state={} step={}/{} loops={} elapsed={}s errors={}",
+                                format_mac(mac), ps.state, ps.current_step, ps.total_steps,
+                                ps.loop_count, ps.elapsed_secs, ps.total_errors);
+                        }
+                    }
+                    Err(e) => {
+                        if !json { eprintln!("Error {}: {}", format_mac(mac), e); }
+                    }
+                }
+            }
+        }
+
+        FbcCommands::Listen => {
+            let mut client = FbcClient::new(interface)?;
+            if !json {
+                println!("Listening for FBC packets on {}. Press Ctrl+C to exit.\n", interface);
+                println!("{:<12} {:<20} {:<6} {:<6} {:<20} {}",
+                    "TIME", "SOURCE", "SEQ", "LEN", "COMMAND", "PAYLOAD");
+                println!("{}", "-".repeat(80));
+            }
+
+            let start = Instant::now();
+            loop {
+                match client.recv_any() {
+                    Ok(Some((src_mac, pkt))) => {
+                        let elapsed = start.elapsed();
+                        let cmd_name = fbc_cmd_name(pkt.header.cmd);
+                        let mac_str = format_mac(&src_mac);
+
+                        if json {
+                            println!(r#"{{"time_ms":{},"src":"{}","seq":{},"cmd":"0x{:02X}","cmd_name":"{}","len":{}}}"#,
+                                elapsed.as_millis(), mac_str, pkt.header.seq,
+                                pkt.header.cmd, cmd_name, pkt.payload.len());
+                        } else {
+                            let time_str = format!("{:.3}s", elapsed.as_secs_f64());
+                            let payload_preview = if pkt.payload.is_empty() {
+                                String::new()
+                            } else {
+                                let preview_len = pkt.payload.len().min(32);
+                                pkt.payload[..preview_len].iter()
+                                    .map(|b| format!("{:02X}", b))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            };
+                            println!("{:<12} {:<20} {:<6} {:<6} {:<20} {}",
+                                time_str, mac_str, pkt.header.seq,
+                                pkt.payload.len(), cmd_name, payload_preview);
+                        }
+                    }
+                    Ok(None) => {
+                        std::thread::sleep(Duration::from_micros(100));
+                    }
+                    Err(e) => {
+                        eprintln!("Receive error: {}", e);
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
                 }
             }
         }
@@ -1613,6 +2118,138 @@ async fn run_sonoma_command(
                 if !result.stderr.is_empty() {
                     eprint!("{}", result.stderr);
                 }
+            }
+        }
+
+        SonomaCommands::RunTest { ip, config } => {
+            let config_str = std::fs::read_to_string(&config)
+                .map_err(|e| anyhow::anyhow!("Failed to read config {}: {}", config.display(), e))?;
+            let test_config: TestConfig = serde_json::from_str(&config_str)
+                .map_err(|e| anyhow::anyhow!("Invalid test config JSON: {}", e))?;
+
+            let client = SonomaClient::new(&ip, user, password);
+            if !json {
+                println!("Starting burn-in test on {}...", ip);
+                println!("  Device: {}", test_config.device_dir);
+                println!("  Vectors: {} + {}", test_config.seq_path, test_config.hex_path);
+                println!("  Duration: {}s", test_config.time_s);
+                if let Some(temp) = test_config.temp_setpoint {
+                    println!("  Temperature: {}°C", temp);
+                }
+                println!("  VICOR cores: {}", test_config.vicor_cores.len());
+                println!("  PMBus rails: {}", test_config.pmbus_rails.len());
+                println!();
+            }
+
+            let start = Instant::now();
+            let result = client.run_test(&test_config).await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let elapsed = start.elapsed();
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|_| "{}".into()));
+            } else {
+                println!("Test complete in {:.1}s", elapsed.as_secs_f64());
+                println!("  Result: {}", if result.run.passed { "PASS" } else { "FAIL" });
+                println!("  Vectors: {}", result.run.vectors_executed);
+                println!("  Errors: {}", result.run.errors);
+                if !result.adc_snapshot.is_empty() {
+                    println!("  ADC snapshot: {} channels read", result.adc_snapshot.len());
+                }
+            }
+        }
+
+        SonomaCommands::Verify { ip } => {
+            let client = SonomaClient::new(&ip, user, password);
+            if !json { println!("Verifying Sonoma profile on {}...", ip); }
+
+            let result = client.verify_profile().await
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)
+                    .unwrap_or_else(|_| "{}".into()));
+            } else {
+                let mut pass_count = 0;
+                let total = result.checks.len();
+                for (name, passed) in &result.checks {
+                    let icon = if *passed { "PASS" } else { "FAIL" };
+                    println!("  [{}] {}", icon, name);
+                    if *passed { pass_count += 1; }
+                }
+                println!();
+                println!("{}/{} checks passed", pass_count, total);
+                if !result.all_passed() {
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        SonomaCommands::Fleet { range, boards, config, concurrent } => {
+            use fbc_host::sonoma::{expand_ip_range, run_fleet};
+
+            let config_str = std::fs::read_to_string(&config)
+                .map_err(|e| anyhow::anyhow!("Failed to read config {}: {}", config.display(), e))?;
+            let test_config: TestConfig = serde_json::from_str(&config_str)
+                .map_err(|e| anyhow::anyhow!("Invalid test config JSON: {}", e))?;
+
+            // Resolve IP list from --range or --boards
+            let ips = if let Some(range_str) = range {
+                expand_ip_range(&range_str)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?
+            } else if let Some(boards_str) = boards {
+                boards_str
+                    .split(',')
+                    .map(|s| {
+                        let s = s.trim();
+                        if s.contains('.') {
+                            s.to_string()
+                        } else {
+                            format!("172.16.0.{}", s)
+                        }
+                    })
+                    .collect()
+            } else {
+                anyhow::bail!("Must specify --range or --boards");
+            };
+
+            if !json {
+                println!("Fleet test: {} boards, {} concurrent", ips.len(), concurrent);
+                for ip in &ips {
+                    println!("  {}", ip);
+                }
+                println!();
+            }
+
+            let start = Instant::now();
+            let results = run_fleet(&ips, &test_config, user, password, concurrent).await;
+            let elapsed = start.elapsed();
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&results)
+                    .unwrap_or_else(|_| "[]".into()));
+            } else {
+                let mut pass_count = 0;
+                println!("{:<18} {:<6} {:<8} {:<10}", "IP", "Result", "Errors", "Duration");
+                println!("{}", "-".repeat(44));
+                for r in &results {
+                    let status = if r.success { "PASS" } else { "FAIL" };
+                    let errors = r.run.as_ref().map(|r| r.errors).unwrap_or(0);
+                    let dur = format!("{:.1}s", r.duration_ms as f64 / 1000.0);
+                    println!("{:<18} {:<6} {:<8} {:<10}", r.ip, status, errors, dur);
+                    if r.success { pass_count += 1; }
+                    if let Some(err) = &r.error {
+                        println!("  Error: {}", err);
+                    }
+                }
+                println!();
+                println!(
+                    "{}/{} boards passed in {:.1}s",
+                    pass_count,
+                    results.len(),
+                    elapsed.as_secs_f64()
+                );
             }
         }
     }
