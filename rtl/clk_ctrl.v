@@ -90,7 +90,7 @@ module clk_ctrl #(
             s_axi_bvalid <= 1'b0;
             s_axi_bresp <= 2'b00;
             freq_sel <= 3'd3;    // Default: 50 MHz
-            vec_clk_en <= 1'b0;  // Default: disabled
+            vec_clk_en <= 1'b1;  // Default: enabled (vec_clk runs at 50MHz from reset)
         end else begin
             case (wr_state)
                 WR_IDLE: begin

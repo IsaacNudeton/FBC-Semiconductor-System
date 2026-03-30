@@ -210,7 +210,7 @@ impl<'a> AnalogMonitor<'a> {
         let raw = self.read_raw(channel)?;
         let config = &CHANNELS[channel as usize];
         let formula = self.effective_formula(channel as usize);
-        let value = self.apply_formula(raw, formula);
+        let value = self.apply_formula_ch(raw, formula, channel as usize);
 
         Ok(Reading {
             channel,
@@ -270,7 +270,7 @@ impl<'a> AnalogMonitor<'a> {
 
             let config = &CHANNELS[ch];
             let formula = self.effective_formula(ch);
-            let value = self.apply_formula(raw, formula);
+            let value = self.apply_formula_ch(raw, formula, ch);
 
             readings[ch] = Reading {
                 channel: ch as u8,
@@ -397,13 +397,15 @@ impl<'a> AnalogMonitor<'a> {
     }
 
     /// Apply formula to convert raw value to engineering units
-    fn apply_formula(&self, raw: u16, formula: Formula) -> f32 {
+    fn apply_formula_ch(&self, raw: u16, formula: Formula, channel: usize) -> f32 {
         match formula {
             Formula::Raw => raw as f32,
 
             Formula::Voltage { scale_mv } => {
-                // V = raw × scale / 4096
-                (raw as f32) * (scale_mv as f32) / 4096.0
+                // XADC (ch 0-15): 16-bit register, divide by 65536
+                // External ADC (ch 16-31): 12-bit, divide by 4096
+                let divisor = if channel < 16 { 65536.0 } else { 4096.0 };
+                (raw as f32) * (scale_mv as f32) / divisor
             }
 
             Formula::DieTemp => {

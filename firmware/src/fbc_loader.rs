@@ -190,7 +190,7 @@ impl FbcLoader {
 
         // Enable FBC execution
         self.fbc_ctrl.enable();
-        self.clk_ctrl.enable();
+        if self.clk_ctrl.is_accessible() { self.clk_ctrl.enable(); }
 
         Ok(header)
     }
@@ -222,12 +222,12 @@ impl FbcLoader {
     /// Start execution (after load())
     pub fn start(&self) {
         self.fbc_ctrl.enable();
-        self.clk_ctrl.enable();
+        if self.clk_ctrl.is_accessible() { self.clk_ctrl.enable(); }
     }
 
     /// Stop execution
     pub fn stop(&self) {
-        self.clk_ctrl.disable();
+        if self.clk_ctrl.is_accessible() { self.clk_ctrl.disable(); }
         self.fbc_ctrl.disable();
     }
 
@@ -262,11 +262,13 @@ impl FbcLoader {
 
     /// Configure vector clock frequency
     fn configure_clock(&self, hz: u32) -> Result<(), LoaderError> {
-        // Set frequency via ONETWO MUX (no PLL relock needed)
+        if !self.clk_ctrl.is_accessible() {
+            // clk_ctrl AXI is broken — skip clock config, run at default 50MHz
+            crate::uart_println!("[LOADER] Clock config skipped (AXI unreachable), using default 50MHz");
+            return Ok(());
+        }
         self.clk_ctrl.set_vec_clock_hz(hz);
 
-        // Wait for MMCM lock (should be nearly instant for MUX switch)
-        // Give it up to 1000 iterations just in case
         for _ in 0..1000 {
             if self.clk_ctrl.is_locked() {
                 return Ok(());
