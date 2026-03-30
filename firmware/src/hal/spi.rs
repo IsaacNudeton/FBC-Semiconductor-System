@@ -144,8 +144,8 @@ impl Spi {
 
     /// Transfer a single byte
     pub fn transfer_byte(&self, tx: u8) -> Result<u8, SpiError> {
-        // Wait for TX FIFO not full
-        for _ in 0..10000 {
+        // Wait for TX FIFO not full (100µs max — SPI runs at 166MHz, one byte = ~50ns)
+        for _ in 0..100 {
             if self.base.offset(regs::ISR).read() & isr::TX_FIFO_NOT_FULL != 0 {
                 break;
             }
@@ -158,8 +158,8 @@ impl Spi {
         // Start transfer
         self.base.offset(regs::CR).set_bits(cr::MAN_START_COM);
 
-        // Wait for RX data
-        for _ in 0..10000 {
+        // Wait for RX data (100µs max)
+        for _ in 0..100 {
             if self.base.offset(regs::ISR).read() & isr::RX_FIFO_NOT_EMPTY != 0 {
                 break;
             }

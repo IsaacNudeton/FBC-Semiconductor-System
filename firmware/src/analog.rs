@@ -135,8 +135,10 @@ pub struct AnalogMonitor<'a> {
     /// Runtime formula overrides — None = use compile-time default from CHANNELS[]
     /// Set via test plan config or host command
     formula_overrides: [Option<Formula>; NUM_CHANNELS],
-    /// Skip external ADC reads (set true on first SPI failure — blown BIM, dead chip)
+    /// Skip external ADC reads after repeated SPI failures
     pub ext_adc_disabled: bool,
+    /// SPI failure count — only disable after 3 consecutive failures (boot race tolerance)
+    ext_adc_fail_count: u8,
 }
 
 impl<'a> AnalogMonitor<'a> {
@@ -147,6 +149,7 @@ impl<'a> AnalogMonitor<'a> {
             ext_adc,
             formula_overrides: [None; NUM_CHANNELS],
             ext_adc_disabled: false,
+            ext_adc_fail_count: 0,
         }
     }
 
@@ -245,12 +248,18 @@ impl<'a> AnalogMonitor<'a> {
             raw: 0,
         }; NUM_CHANNELS];
 
-        // Read external ADC (batch) — skip entirely if disabled (dead SPI = 340ms wasted)
+        // Read external ADC (batch) — skip if disabled after 3 consecutive failures
         let ext_raw = if !self.ext_adc_disabled {
             match self.ext_adc.read_all() {
-                Ok(r) => r,
+                Ok(r) => {
+                    self.ext_adc_fail_count = 0; // Reset on success
+                    r
+                }
                 Err(_) => {
-                    self.ext_adc_disabled = true;
+                    self.ext_adc_fail_count += 1;
+                    if self.ext_adc_fail_count >= 3 {
+                        self.ext_adc_disabled = true; // Permanently disable after 3 failures
+                    }
                     [0u16; 16]
                 }
             }

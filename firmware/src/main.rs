@@ -388,6 +388,7 @@ pub extern "C" fn main() -> ! {
     // Safety monitor: check temp/current every N iterations (~500ms)
     const SAFETY_CHECK_INTERVAL: u32 = 500_000;
     let mut safety_counter: u32 = 0;
+    let mut boot_grace: u8 = 5; // Skip first 5 safety cycles (~2.5s) for ADC init
     let mut safety_tripped: bool = false; // Latched — stays true until host sends RESET
 
     // Track sender MAC for unicast responses
@@ -1265,6 +1266,9 @@ pub extern "C" fn main() -> ! {
         safety_counter += 1;
         if safety_counter >= SAFETY_CHECK_INTERVAL && !safety_tripped {
             safety_counter = 0;
+            // Skip first 5 safety cycles (~2.5s) to let MAX11131 SPI initialize
+            if boot_grace > 0 { boot_grace -= 1; }
+            else {
 
             // Check 1: Temperature — prefer THERM_CASE (NTC on BIM) over XADC die temp
             // AnalogMonitor auto-disables external ADC on first SPI failure (blown BIM etc.)
@@ -1366,6 +1370,7 @@ pub extern "C" fn main() -> ! {
                     }
                 }
             }
+            } // else (boot_grace == 0)
         }
 
         // Yield to prevent hogging CPU
