@@ -206,7 +206,7 @@ pub extern "C" fn main() -> ! {
     let _ = vicor.init();  // Sets all cores to 0V and disabled
 
     // Analog Monitor (unified 32-channel interface: XADC + MAX11131)
-    let analog_monitor = AnalogMonitor::new(&xadc, &ext_adc);
+    let mut analog_monitor = AnalogMonitor::new(&xadc, &ext_adc);
     // SPI/ADC/DAC init done
 
     uart_println!("[BOOT] SPI/ADC/DAC/VICOR init done");
@@ -1136,17 +1136,20 @@ pub extern "C" fn main() -> ! {
         // clk_ctrl AXI crash FIXED March 25 — root cause was incomplete `case` in
         // AXI write FSM (missing `default:` arms). Verified on hardware.
         if let Some(config) = handler.take_pending_config() {
-            let freq = VecClockFreq::from_hz(match config.clock_div {
-                0 => 5_000_000,
-                1 => 10_000_000,
-                2 => 25_000_000,
-                3 => 50_000_000,
-                4 => 100_000_000,
-                _ => 50_000_000,
-            });
-            clk_ctrl.set_vec_clock(freq);
-            uart_println!("[CFG] Vector clock set to {} MHz",
-                freq.to_hz() / 1_000_000);
+            if clk_ctrl.is_accessible() {
+                let freq = VecClockFreq::from_hz(match config.clock_div {
+                    0 => 5_000_000,
+                    1 => 10_000_000,
+                    2 => 25_000_000,
+                    3 => 50_000_000,
+                    4 => 100_000_000,
+                    _ => 50_000_000,
+                });
+                clk_ctrl.set_vec_clock(freq);
+                uart_println!("[CFG] Vector clock set to {} MHz", freq.to_hz() / 1_000_000);
+            } else {
+                uart_println!("[CFG] Clock control NOT accessible — skipping (needs bitstream fix)");
+            }
         }
 
         // Check for state transitions
@@ -1264,13 +1267,11 @@ pub extern "C" fn main() -> ! {
             safety_counter = 0;
 
             // Check 1: Temperature — prefer THERM_CASE (NTC on BIM) over XADC die temp
-            // THERM_CASE = actual DUT case temperature (what matters for burn-in)
-            // XADC = FPGA die temp (self-protection only, not DUT thermal)
+            // AnalogMonitor auto-disables external ADC on first SPI failure (blown BIM etc.)
             let temp_mc = analog_monitor.read_case_temp_mc()
                 .unwrap_or_else(|_| xadc.read_temperature_millicelsius().unwrap_or(25_000));
             {
                 // Update thermal controller with real-time V×I power feedback
-                // Overrides compile-time estimate with actual measured power
                 if let Ok((_total_mw, power_level)) = analog_monitor.read_core_power_mw() {
                     thermal.set_power_level(power_level);
                 }

@@ -484,9 +484,35 @@ impl ClkCtrl {
 
     /// Set vector clock frequency
     ///
-    /// Switches clock via BUFGMUX - glitch-free, <100ns transition
+    /// NOTE: clk_ctrl at 0x4008_0000 may not be accessible in all bitstreams.
+    /// The firmware guards access via `is_accessible()` check at boot.
     pub fn set_vec_clock(&self, freq: VecClockFreq) {
+        self.disable();
+        for _ in 0..100 { core::hint::spin_loop(); }
         self.write_reg(0x00, freq as u32);
+        for _ in 0..100 { core::hint::spin_loop(); }
+        self.enable();
+    }
+
+    /// Check if clk_ctrl peripheral is accessible at 0x4008_0000.
+    /// If this returns false, do NOT read or write any ClkCtrl register.
+    /// Accessing a non-responsive AXI slave hangs the bus → Data Abort.
+    pub fn is_accessible(&self) -> bool {
+        // Read the MMCM lock status register (offset 0x04).
+        // If the peripheral exists, this returns 0 or 1.
+        // If it doesn't exist, the read hangs and we never return.
+        // Use a volatile read with a known-safe register.
+        //
+        // WARNING: There's no timeout mechanism in hardware — if the
+        // peripheral doesn't respond, the CPU hangs. This function is
+        // only safe to call during boot with JTAG available for recovery.
+        //
+        // TODO: Use the Zynq AXI timeout mechanism or a watchdog timer
+        // to detect non-responsive peripherals safely.
+        //
+        // For now: DISABLED. The xsdb probe confirmed 0x4008_0000 hangs.
+        // Do not access clk_ctrl until bitstream is rebuilt with working address map.
+        false
     }
 
     /// Get current vector clock frequency

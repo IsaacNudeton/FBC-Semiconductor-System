@@ -835,16 +835,17 @@ impl FbcClient {
     pub fn get_plan_status(&mut self, mac: &[u8; 6]) -> Result<PlanStatus> {
         let rsp = self.send_req(mac, fbc_protocol::testplan::PLAN_STATUS_REQ,
                                 fbc_protocol::testplan::PLAN_STATUS_RSP, &[], 500)?;
-        if rsp.payload.len() < 15 {
+        if rsp.payload.len() < 14 {
             return Err(FbcError::Board("Plan status response too short".into()));
         }
+        // Firmware format: [state:1][step:1][loop:4][plan_loops:4][elapsed:4] = 14 bytes
         Ok(PlanStatus {
             state: PlanState::from_u8(rsp.payload[0]),
             current_step: rsp.payload[1],
-            total_steps: rsp.payload[2],
-            loop_count: BigEndian::read_u32(&rsp.payload[3..7]),
-            elapsed_secs: BigEndian::read_u32(&rsp.payload[7..11]),
-            total_errors: BigEndian::read_u32(&rsp.payload[11..15]),
+            total_steps: 0, // Not in wire format — plan definition knows this
+            loop_count: BigEndian::read_u32(&rsp.payload[2..6]),
+            elapsed_secs: BigEndian::read_u32(&rsp.payload[10..14]),
+            total_errors: BigEndian::read_u32(&rsp.payload[6..10]),
         })
     }
 

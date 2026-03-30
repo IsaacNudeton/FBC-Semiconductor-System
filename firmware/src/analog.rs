@@ -135,6 +135,8 @@ pub struct AnalogMonitor<'a> {
     /// Runtime formula overrides — None = use compile-time default from CHANNELS[]
     /// Set via test plan config or host command
     formula_overrides: [Option<Formula>; NUM_CHANNELS],
+    /// Skip external ADC reads (set true on first SPI failure — blown BIM, dead chip)
+    pub ext_adc_disabled: bool,
 }
 
 impl<'a> AnalogMonitor<'a> {
@@ -144,6 +146,7 @@ impl<'a> AnalogMonitor<'a> {
             xadc,
             ext_adc,
             formula_overrides: [None; NUM_CHANNELS],
+            ext_adc_disabled: false,
         }
     }
 
@@ -198,6 +201,11 @@ impl<'a> AnalogMonitor<'a> {
         if channel >= NUM_CHANNELS as u8 {
             return Err(MonitorError::InvalidChannel);
         }
+        // Skip external ADC channels if disabled (dead SPI = 10ms+ per byte)
+        if channel >= 16 && self.ext_adc_disabled {
+            let config = &CHANNELS[channel as usize];
+            return Ok(Reading { channel, name: config.name, value: 0.0, unit: config.unit, raw: 0 });
+        }
 
         let raw = self.read_raw(channel)?;
         let config = &CHANNELS[channel as usize];
@@ -228,8 +236,7 @@ impl<'a> AnalogMonitor<'a> {
     /// Read ALL 32 channels at once
     ///
     /// This is the main GUI function - returns everything you need
-    pub fn read_all(&self) -> Result<[Reading; NUM_CHANNELS], MonitorError> {
-        // Read XADC channels (0-15)
+    pub fn read_all(&mut self) -> Result<[Reading; NUM_CHANNELS], MonitorError> {
         let mut readings: [Reading; NUM_CHANNELS] = [Reading {
             channel: 0,
             name: "",
@@ -238,16 +245,26 @@ impl<'a> AnalogMonitor<'a> {
             raw: 0,
         }; NUM_CHANNELS];
 
-        // Read external ADC (batch)
-        let ext_raw = self.ext_adc.read_all()?;
+        // Read external ADC (batch) — skip entirely if disabled (dead SPI = 340ms wasted)
+        let ext_raw = if !self.ext_adc_disabled {
+            match self.ext_adc.read_all() {
+                Ok(r) => r,
+                Err(_) => {
+                    self.ext_adc_disabled = true;
+                    [0u16; 16]
+                }
+            }
+        } else {
+            [0u16; 16]
+        };
 
-        // Build readings array
+        // Build readings array — each channel reads independently
         for ch in 0..NUM_CHANNELS {
             let raw = if ch < 16 {
-                // XADC channel
-                self.read_xadc_channel(ch as u8)?
+                // XADC channel — read individually, default 0 on error
+                self.read_xadc_channel(ch as u8).unwrap_or(0)
             } else {
-                // External ADC channel
+                // External ADC channel (already batch-read above)
                 ext_raw[ch - 16]
             };
 
