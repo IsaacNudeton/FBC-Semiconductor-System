@@ -1,171 +1,150 @@
 # FBC Semiconductor System
 
-FPGA-based burn-in test system for ~500 Zynq 7020 controllers. Modernizing the 2016 Sonoma/kzhang_v2 system with bare-metal firmware and custom FPGA toolchain.
+Autonomous burn-in test system for semiconductor chips. Bare-metal Zynq 7020 firmware, raw Ethernet protocol, compressed vector format. Boards run 500+ hours without a PC.
 
-## Project Status: Active Development
+## What It Does
 
-| Component | Progress | Notes |
-|-----------|----------|-------|
-| RTL Core | 85% | I/O subsystem, clock gen, ARM interface complete |
-| Testbenches | 40% | Decoder, io_cell, io_bank, clk_gen, top |
-| Firmware | 90% | HAL complete (17 drivers), FBC Protocol implemented, **running on hardware** |
-| FPGA Toolchain | 99% | ONETWO routing complete (3,488 frames validated) |
-| **Host CLI** | **100%** | **28 FBC commands + 20 Sonoma + profile — fully implemented** |
-| FBC System GUI | 100% | Tauri + React, 57 commands, Pattern Converter + Pin Import integrated |
-| Pattern Converter | 100% | ATP/STIL/AVC → `.hex` ✅, `.fbc` ✅, CSV/Excel/PDF → Pin Import ✅ |
-| Vector Converters (Rust) | 100% | `.fvec` → `.fbc` (tested, 4.8-710x compression) |
-
-**✅ March 2026:** First Light achieved — firmware running on Zynq 7020 (CPU @ 667MHz, DDR @ 533MHz)
-**✅ March 2026:** Pattern Converter complete — `gen_fbc.c` added, outputs `.fbc` compressed format
-**✅ March 2026:** Host CLI complete — all 28 FBC commands implemented (pause, resume, pmbus, eeprom-write, firmware-update, log-info, read-log)
-
----
-
-## ⚠️ Pattern Converter Gap
-
-**UPDATE March 2026:** This gap has been **FIXED**. `gen_fbc.c` exists and is integrated.
-
-~~**Problem:** Customer patterns (ATP/STIL/AVC) cannot be converted to `.fbc` (compressed FBC format).~~
-
-~~```
-ATP/STIL/AVC ──▶ C Engine (gui/src-tauri/c-engine/pc/) ──▶ .hex + .seq ✅
-                                                              │
-                                                              ▼
-                                                        Legacy system
-                                                              │
-                                                              ❌
-                                                              │
-                                                        .fbc format
-                                                              ▲
-                                                              │
-.fvec ──▶ Rust (host/src/vector/) ──▶ .fbc ✅─────────────────┘
-```~~
-
-~~**Why This Matters:**~~
-~~`.hex` = 40 bytes/vector (uncompressed, legacy Sonoma format)~~
-~~`.fbc` = 1-21 bytes/vector (compressed: VECTOR_ZERO=1B, VECTOR_RUN=5B, VECTOR_SPARSE=2+N bytes)~~
-~~**Compression:** 4.8-710x smaller (verified: test_core.fbc = 77KB vs 55MB uncompressed)~~
-~~**Migration:** All existing ATP/STIL/AVC patterns need `.fbc` for FBC system~~
-
-~~**Implementation Status:**~~
-| Converter | Input | Output | Status |
-|-----------|-------|--------|--------|
-| C Engine (`gui/src-tauri/c-engine/pc/`) | ATP/STIL/AVC | `.hex` + `.seq` | ✅ Complete (14 C files) |
-| Rust Compiler (`host/src/vector/`) | `.fvec` | `.fbc` | ✅ Complete |
-| **gen_fbc.c** (`gui/src-tauri/c-engine/pc/`) | PcPattern IR | `.fbc` | ✅ **Complete March 2026** |
-
-~~**Recommended Fix:** Add `gen_fbc.c` to `gui/src-tauri/c-engine/pc/` — outputs `.fbc` opcodes directly from C engine. — **DONE**~~
-
----
+Plugs into existing burn-in hardware (~44 boards per system). Each board has a Zynq 7020 FPGA + ARM that drives 160 GPIO pins into a Device Under Test, monitors power/temperature/errors, and decides pass/fail. The PC uploads vectors and a test plan, then walks away.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         HOST PC                                     │
-│  ┌──────────────┐                                                   │
-│  │   host/      │  fbc-cli --host 172.16.0.100 run test.fbc        │
-│  │  (Rust CLI)  │────────────────────┐                              │
-│  └──────────────┘                    │ TCP/IP                       │
-└──────────────────────────────────────┼──────────────────────────────┘
-                                       │
-                                       ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                      ZYNQ 7020 BOARD (x500)                         │
-│  ┌──────────────────────────┐    ┌──────────────────────────────┐  │
-│  │      ARM Cores (PS)      │    │        FPGA Fabric (PL)      │  │
-│  │  ┌────────────────────┐  │    │  ┌────────────────────────┐  │  │
-│  │  │    firmware/       │  │◄──►│  │        rtl/            │  │  │
-│  │  │  (bare-metal Rust) │  │AXI │  │  fbc_top.v             │  │  │
-│  │  │   - TCP server     │  │    │  │  fbc_decoder.v         │  │  │
-│  │  │   - DMA control    │  │    │  │  vector_engine.v       │  │  │
-│  │  │   - Vector loading │  │    │  │  error_counter.v       │  │  │
-│  │  └────────────────────┘  │    │  └────────────────────────┘  │  │
-│  └──────────────────────────┘    └──────────────┬───────────────┘  │
-│                                                  │ 160 GPIOs        │
-└──────────────────────────────────────────────────┼──────────────────┘
-                                                   ▼
-                                          ┌───────────────┐
-                                          │  Chip Under   │
-                                          │     Test      │
-                                          └───────────────┘
+PC (CLI / GUI)                    Zynq 7020 Board
+  |                                  |
+  |  Raw Ethernet 0x88B5             |
+  |  (no IP, no TCP, <1ms RTT)      |
+  |--------------------------------->|
+  |                                  |  ARM Cortex-A9 (bare-metal Rust)
+  |  79 protocol commands            |    - 13 subsystems
+  |  across 13 subsystems            |    - SD card pattern storage
+  |                                  |    - DDR double-buffer
+  |                                  |    - Autonomous test plan executor
+  |                                  |
+  |                                  |  FPGA Fabric (Verilog)
+  |                                  |    - FBC decoder (7 opcodes)
+  |                                  |    - 160-pin vector engine
+  |                                  |    - Error detection BRAMs
+  |                                  |    - DMA from DDR
+  |                                  |
+  |                                  |-----> 160 GPIO pins --> DUT
 ```
 
-## Project Structure
+## Key Numbers
+
+| Metric | Value |
+|--------|-------|
+| Protocol commands | 79 across 13 subsystems |
+| FbcClient methods | 47 (Rust host library) |
+| Firmware tests | 16 passing |
+| Host tests | 27 passing |
+| Vector compression | 4.8x - 710x (.hex -> .fbc) |
+| Boot time | <1 second (bare-metal, no OS) |
+| Protocol latency | <1ms round-trip (raw Ethernet) |
+| Max patterns per test | 256 on SD card |
+| Max test steps | 96 per plan |
+| DDR vector buffer | 508MB (dual 252/256MB regions) |
+| Thermal controller | Lean-verified headroom kernel (0 tuned constants) |
+
+## Components
+
+### Firmware (`firmware/`)
+Bare-metal Rust for ARM Cortex-A9. No OS, no Linux, no SSH.
+
+- **Protocol handler:** 79 commands — power, vectors, analog, thermal, EEPROM, test plan
+- **Test plan executor:** Autonomous burn-in with per-step temp/clock/fail-action
+- **SD pattern storage:** 256 patterns, DDR double-buffer with non-blocking chunked loading
+- **Thermal control:** Headroom kernel with Lean-verified stability (MetabolicAge_v3.lean)
+- **Safety monitor:** Over/under voltage, over-temperature, emergency stop — runs every loop iteration
+- **HAL:** 17 drivers (VICOR, PMBus, MAX11131 ADC, BU2505 DAC, EEPROM, SD, SPI, I2C, UART, XADC, GPIO, DMA, DNA, GIC, SLCR, Ethernet PHY, thermal)
+
+### Host CLI (`host/`)
+Rust library + CLI for controlling boards from a PC.
+
+```bash
+fbc-cli fbc discover                           # Find boards on network
+fbc-cli fbc status all                         # All board telemetry
+fbc-cli fbc slot-upload <MAC> 0 pattern.fbc    # Upload pattern to SD
+fbc-cli fbc set-plan <MAC> plan.json           # Load test plan
+fbc-cli fbc run-plan <MAC>                     # Start autonomous execution
+fbc-cli fbc plan-status <MAC>                  # Check progress
+fbc-cli fbc record <MAC> -o test.fbd           # Record binary datalog
+```
+
+### Pattern Converter (`gui/src-tauri/c-engine/pc/`)
+Zero-dependency C11 library. Converts customer vector formats to FBC compressed binary.
 
 ```
-FBC Semiconductor System/
-├── constraints/        # XDC pin constraints for Zynq 7020
-├── docs/               # Learning notes on Zynq architecture
-├── firmware/           # Bare-metal Rust for ARM Cortex-A9 (replaces Linux)
-├── fpga-toolchain/     # Custom Verilog→bitstream flow (replaces Vivado)
-├── host/               # PC-side CLI tool for controlling boards
-├── reference/          # 2016 kzhang_v2 files for comparison
-├── rtl/                # New FBC Verilog design
-├── scripts/            # Vivado TCL scripts (legacy flow)
-├── tb/                 # Verilog testbenches
-├── Makefile            # Build automation
-├── TODO.md             # Development roadmap
-└── CLAUDE.md           # AI context file (project state & directions)
+ATP/STIL/AVC + PIN_MAP --> .hex (legacy) + .seq + .fbc (compressed)
+CSV/Excel/PDF --> Pin Table --> Device Config --> 8 output files
 ```
 
-## RTL Modules
+### RTL (`rtl/`)
+16 Verilog modules. Verified on hardware, timing closure WNS=+0.018ns.
 
-| File | Purpose |
-|------|---------|
-| `fbc_pkg.vh` | Global defines (widths, opcodes, timing) |
-| `fbc_top.v` | Top-level wrapper |
-| `fbc_decoder.v` | Decodes FBC instructions → control signals |
-| `vector_engine.v` | Executes test vectors, handles timing |
-| `error_counter.v` | Counts and logs pin mismatches |
-| `axi_fbc_ctrl.v` | AXI register interface to ARM |
-| `axi_stream_fbc.v` | AXI-Stream for vector DMA |
+- `fbc_decoder.v` — 7-opcode instruction set
+- `vector_engine.v` — 160-pin drive + compare
+- `fbc_dma.v` — AXI DMA from DDR
+- `axi_device_dna.v` — Unique per-silicon MAC address
 
-## FBC Opcodes
+### Native GUI (`app/`)
+wgpu immediate-mode renderer. 14 panels, 0 warnings.
 
-| Opcode | Hex | Description |
-|--------|-----|-------------|
-| PATTERN_REP | 0xB5 | Repeat pin pattern N times |
-| LOOP_N | 0xB0 | Loop instruction block N times |
-| PATTERN_SEQ | 0xB6 | Generate sequential pattern |
-| SET_PINS | 0xC0 | Set pin values directly |
-| SET_OEN | 0xC1 | Set output enables |
-| WAIT | 0xD0 | Wait N cycles |
-| HALT | 0xFF | End of program |
+- Dashboard, Device Profiling, Engineering, Datalogs tabs
+- Board tree sidebar (System -> Shelf -> Tray -> Board)
+- Transport layer dispatches to FBC (Ethernet) or legacy (SSH)
+
+## .fbc Compressed Vector Format
+
+```
+HEADER (32 bytes): magic, version, pin_count, num_vectors, vec_clock_hz, CRC32
+PIN_CONFIG (80 bytes): 160 pins x 4 bits
+COMPRESSED DATA:
+  OP_VECTOR_FULL   0x01  1+20B   (raw 160-bit vector)
+  OP_VECTOR_SPARSE 0x02  1+1+NB  (delta from previous)
+  OP_VECTOR_RUN    0x03  1+4B    (repeat count)
+  OP_VECTOR_ZERO   0x04  1B      (all zeros)
+  OP_VECTOR_ONES   0x05  1B      (all ones)
+  OP_END           0x07  1B      (stream terminator)
+THERMAL_PROFILE: power estimates per 1024 vectors
+```
+
+## Binary Datalog Format (.fbd)
+
+Packet capture of all board telemetry during a test. ~4x denser than CSV, CRC-verified.
+
+```
+HEADER (32 bytes): magic, board_mac, test_start_epoch, plan_hash
+BODY (repeating): [offset_ms:u32][raw FBC packet (8B header + payload)]
+FOOTER (12 bytes): record_count, body_crc32, end_magic
+```
 
 ## Building
 
-### FPGA (Custom Toolchain)
 ```bash
-cd fpga-toolchain
-cargo build --release
-./target/release/fbc-synth build ../rtl/fbc_pkg.vh ../rtl/fbc_top.v \
-    ../rtl/fbc_decoder.v ../rtl/axi_stream_fbc.v ../rtl/vector_engine.v \
-    ../rtl/error_counter.v ../rtl/axi_fbc_ctrl.v -o ../top.bit
+# Firmware (bare-metal ARM)
+cd firmware && cargo build --release --target armv7a-none-eabi
+
+# Host CLI + tests
+cd host && cargo build --release && cargo test
+
+# Native GUI
+cd app && cargo build --release
+
+# FPGA bitstream (Vivado)
+vivado -mode batch -source scripts/build_bitstream.tcl
 ```
 
-### Simulation (Icarus Verilog)
-```bash
-make sim-fbc      # Run decoder testbench
-make sim-top      # Run top-level testbench
-```
+## Hardware
 
-### Firmware
-```bash
-cd firmware
-cargo build --release --target armv7a-none-eabi
-```
-
-## Key Improvements Over 2016 System
-
-| Aspect | Legacy (Sonoma) | FBC System |
-|--------|-----------------|------------|
-| OS | Linux (~30s boot) | Bare-metal (<1s boot) |
-| Build | Vivado 2015.4 | Custom toolchain |
-| Pattern encoding | Raw vectors | FBC compressed |
-| Firmware | Shell scripts + netcat | Rust with proper protocol |
-| Error handling | /tmp fills up, crashes | Hardware-limited |
+- **Part:** XC7Z020-1CLG484C (Zynq 7020, 484-pin)
+- **DDR3:** IS43TR16256A-125KBLI (1GB, 2x 512MB)
+- **ADC:** MAX11131 (16-channel external) + XADC (on-die)
+- **DAC:** BU2505FV (10-channel, controls VICOR + thermal)
+- **Ethernet PHY:** 88E1512
+- **JTAG:** FT232H via MPSSE
 
 ## License
 
-Proprietary - Isaac Nudeton / ISE Labs
+MIT
+
+Isaac Nudeton / ISE Labs
