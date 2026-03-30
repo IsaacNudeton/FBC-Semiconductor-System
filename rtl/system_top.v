@@ -159,15 +159,22 @@ module system_top (
     wire bram_gate_n;       // From clk_ctrl: 0 during clock switch (gates error BRAMs)
 
     // Clock Control AXI-Lite (0x4008_0000)
-    wire [11:0] axi_clk_awaddr, axi_clk_araddr;
-    wire        axi_clk_awvalid, axi_clk_awready;
-    wire        axi_clk_arvalid, axi_clk_arready;
-    wire [31:0] axi_clk_wdata, axi_clk_rdata;
-    wire [3:0]  axi_clk_wstrb;
-    wire        axi_clk_wvalid, axi_clk_wready;
-    wire [1:0]  axi_clk_bresp, axi_clk_rresp;
-    wire        axi_clk_bvalid, axi_clk_bready;
-    wire        axi_clk_rvalid, axi_clk_rready;
+    // dont_touch: Vivado optimizer incorrectly removes the MUX path for clk_ctrl
+    // because it thinks rvalid/rdata are equivalent to the default (constant 0).
+    // This disconnects clk_ctrl from the AXI bus, making reads hang.
+    // dont_touch prevents Vivado from optimizing away the clk_ctrl AXI path.
+    // Without it, the optimizer proves rvalid/rdata are "constant" (because
+    // freq_sel and vec_clk_en hold reset values until firmware writes them),
+    // collapses the output MUX entry, and disconnects clk_ctrl from the bus.
+    (* dont_touch = "true" *) wire [11:0] axi_clk_awaddr, axi_clk_araddr;
+    (* dont_touch = "true" *) wire        axi_clk_awvalid, axi_clk_awready;
+    (* dont_touch = "true" *) wire        axi_clk_arvalid, axi_clk_arready;
+    (* dont_touch = "true" *) wire [31:0] axi_clk_wdata, axi_clk_rdata;
+    (* dont_touch = "true" *) wire [3:0]  axi_clk_wstrb;
+    (* dont_touch = "true" *) wire        axi_clk_wvalid, axi_clk_wready;
+    (* dont_touch = "true" *) wire [1:0]  axi_clk_bresp, axi_clk_rresp;
+    (* dont_touch = "true" *) wire        axi_clk_bvalid, axi_clk_bready;
+    (* dont_touch = "true" *) wire        axi_clk_rvalid, axi_clk_rready;
 
     // Vector Status AXI-Lite (0x4006_0000)
     wire [11:0] axi_status_awaddr, axi_status_araddr;

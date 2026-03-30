@@ -489,13 +489,16 @@ impl ClkCtrl {
     /// Clock path: MMCM → BUFGMUX → BUFGCE → vec_clk → BRAMs
     /// Gate BUFGCE → switch BUFGMUX (glitch hidden) → release BUFGCE
     pub fn set_vec_clock(&self, freq: VecClockFreq) {
-        // Gate vec_clk via BUFGCE (output goes static)
+        // Read current value — skip write if already set (prevents any glitch)
+        let current = self.read_reg(0x00) & 0x07;
+        if current == freq as u32 {
+            return; // Already at this frequency, no write needed
+        }
+        // Gate BUFGCE → switch BUFGMUX → release
         self.write_reg(0x08, 0);
-        crate::delay_us(10);
-        // Switch BUFGMUX (safe — BUFGCE holds output)
+        crate::delay_us(1000);
         self.write_reg(0x00, freq as u32);
-        crate::delay_us(10);
-        // Release — vec_clk resumes clean at new frequency
+        crate::delay_us(1000);
         self.write_reg(0x08, 1);
     }
 
@@ -515,10 +518,10 @@ impl ClkCtrl {
         // TODO: Use the Zynq AXI timeout mechanism or a watchdog timer
         // to detect non-responsive peripherals safely.
         //
-        // DISABLED: AXI reads to 0x4008_0000 hang the ARM on all bitstreams tested.
-        // The clk_ctrl RTL is correct but the synthesized AXI path is broken.
-        // Needs Vivado schematic-level debugging of the M_AXI_GP0 interconnect.
-        // All other peripherals (0x4004-0x400A except 0x4008) work correctly.
+        // v5 bitstream: dont_touch fixed read path (0x04 reads OK at boot).
+        // But writes to 0x00 still crash — even writing the same value.
+        // Read-before-write to skip same-value writes also crashes on the read.
+        // Root cause still unknown. Default 50MHz works for all operations.
         false
     }
 
