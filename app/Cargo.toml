@@ -1,0 +1,25 @@
+[package]
+name = "fbc-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fbc-host = { path = "../host" }
+wgpu = { version = "24", default-features = false, features = ["wgsl", "dx12"] }
+winit = "0.30"
+bytemuck = { version = "1", features = ["derive"] }
+glam = "0.29"
+image = { version = "0.25", default-features = false, features = ["png"] }
+fontdue = "0.9"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time"] }
+pollster = "0.4"
+rfd = "0.15"
+serialport = "4"
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
