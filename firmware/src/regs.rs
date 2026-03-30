@@ -510,8 +510,10 @@ impl ClkCtrl {
         // TODO: Use the Zynq AXI timeout mechanism or a watchdog timer
         // to detect non-responsive peripherals safely.
         //
-        // For now: DISABLED. The xsdb probe confirmed 0x4008_0000 hangs.
-        // Do not access clk_ctrl until bitstream is rebuilt with working address map.
+        // DISABLED: BRAM ENA gate fix insufficient — glitched clk_a still triggers
+        // BRAM internals before ena can be sampled. Need BUFGCE gate on vec_clk
+        // BEFORE it reaches BRAMs, controlled by clk_ctrl during freq_sel switch.
+        // RTL fix required in clk_gen.v — gate vec_clk via BUFGCE during switch.
         false
     }
 

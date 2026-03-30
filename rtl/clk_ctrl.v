@@ -53,7 +53,8 @@ module clk_ctrl #(
     //=========================================================================
     output reg [2:0]                freq_sel,       // To clk_gen
     output reg                      vec_clk_en,     // To clk_gen
-    input wire                      mmcm_locked     // From clk_gen
+    input wire                      mmcm_locked,    // From clk_gen
+    output wire                     bram_gate_n     // Active-low: 0 = BRAMs disabled during clock switch
 );
 
     //=========================================================================
@@ -138,6 +139,31 @@ module clk_ctrl #(
 
                 default: wr_state <= WR_IDLE;
             endcase
+        end
+    end
+
+    //=========================================================================
+    // Clock Switch Sequencer — gates error BRAM ENA during BUFGMUX transition
+    // Without this, the glitch on vec_clk during BUFGMUX switchover corrupts
+    // the BRAM port A state, hanging the AXI read port and crashing the ARM.
+    //=========================================================================
+    reg [3:0] switch_count;  // Counts down from 15 to 0 after freq_sel change
+    reg [2:0] freq_sel_prev; // Previous freq_sel to detect changes
+
+    assign bram_gate_n = (switch_count == 0); // 1 = normal, 0 = BRAMs gated
+
+    always @(posedge clk or negedge resetn) begin
+        if (!resetn) begin
+            switch_count <= 0;
+            freq_sel_prev <= 3'd3;
+        end else begin
+            freq_sel_prev <= freq_sel;
+            if (freq_sel != freq_sel_prev) begin
+                // freq_sel just changed — start gating BRAMs
+                switch_count <= 4'd15;
+            end else if (switch_count != 0) begin
+                switch_count <= switch_count - 1;
+            end
         end
     end
 

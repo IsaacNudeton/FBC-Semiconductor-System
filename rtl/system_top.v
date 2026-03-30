@@ -155,7 +155,8 @@ module system_top (
     //=========================================================================
     // Internal Signals - Clock Control
     //=========================================================================
-    wire [2:0] freq_sel;  // From clk_ctrl AXI interface
+    wire [2:0] freq_sel;    // From clk_ctrl AXI interface
+    wire bram_gate_n;       // From clk_ctrl: 0 during clock switch (gates error BRAMs)
 
     // Clock Control AXI-Lite (0x4008_0000)
     wire [11:0] axi_clk_awaddr, axi_clk_araddr;
@@ -248,7 +249,8 @@ module system_top (
         // Clock Generator Interface
         .freq_sel       (freq_sel),
         .vec_clk_en     (vec_clk_en),
-        .mmcm_locked    (clk_locked)
+        .mmcm_locked    (clk_locked),
+        .bram_gate_n    (bram_gate_n)
     );
 
     //=========================================================================
@@ -928,6 +930,7 @@ module system_top (
         .addr_a  (err_pat_addr[9:0]),
         .din_a   (err_pat_data),
         .we_a    (err_pat_we),
+        .ena     (bram_gate_n),               // Disabled during clock switch
         .clk_b   (clk_100m),
         .addr_b  (err_rd_addr),
         .dout_b  (err_pat_rd)
@@ -943,6 +946,7 @@ module system_top (
         .addr_a  (err_vec_addr[9:0]),
         .din_a   (err_vec_data),
         .we_a    (err_vec_we),
+        .ena     (bram_gate_n),               // Disabled during clock switch
         .clk_b   (clk_100m),
         .addr_b  (err_rd_addr),
         .dout_b  (err_vec_rd)
@@ -958,6 +962,7 @@ module system_top (
         .addr_a  (err_cyc_addr[9:0]),
         .din_a   (err_cyc_data),
         .we_a    (err_cyc_we),
+        .ena     (bram_gate_n),               // Disabled during clock switch
         .clk_b   (clk_100m),
         .addr_b  (err_rd_addr),
         .dout_b  (err_cyc_rd)
