@@ -1350,18 +1350,20 @@ pub extern "C" fn main() -> ! {
             }
 
             // Check 3: VICOR core voltage out of range (catches regulator faults)
-            // Only check if we have valid EEPROM limits
-            if board_config.has_eeprom() && !safety_tripped {
+            // Always check — uses EEPROM limits if programmed, hardcoded defaults if not
+            if !safety_tripped {
                 let vicor_status = vicor.get_status();
+                let hw_max = board_config.hw_limits().vicor_max_mv;
                 for (i, (enabled, voltage_mv)) in vicor_status.iter().enumerate() {
                     if !enabled { continue; }
                     let rail = board_config.effective_rail(i);
-                    if rail.max_voltage_mv == 0 { continue; } // No limit configured
+                    // Use EEPROM limit if available, else hardware max (1200mV for Unknown BIM)
+                    let max_mv = if rail.max_voltage_mv > 0 { rail.max_voltage_mv } else { hw_max };
 
-                    if *voltage_mv > rail.max_voltage_mv + 100 {
+                    if *voltage_mv > max_mv + 100 {
                         // +100mV margin for transient spikes
                         uart_println!("[SAFETY] VICOR core {} overvoltage: {}mV > {}mV — EMERGENCY STOP",
-                            i + 1, voltage_mv, rail.max_voltage_mv);
+                            i + 1, voltage_mv, max_mv);
                         vicor.disable_all();
                         psu_mgr.disable_all();
                         safety_tripped = true;
