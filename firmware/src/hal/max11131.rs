@@ -11,7 +11,7 @@
 use super::{Spi, SpiError, delay_us};
 
 /// ADC chip select (INVARIANT: hardware wiring)
-const ADC_CS: u8 = 1;
+const ADC_CS: u8 = 2;  // SPI0_SS2 — schematic shows SS2 drives ADC MISO tristate buffer OE
 
 /// Number of channels
 pub const NUM_CHANNELS: usize = 16;

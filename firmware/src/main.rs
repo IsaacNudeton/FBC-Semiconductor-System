@@ -1273,15 +1273,22 @@ pub extern "C" fn main() -> ! {
                 }
 
                 // Feed thermal controller with case temperature
-                let thermal_out = thermal.update(temp_mc);
-                let heater_duty = output_to_heater(thermal_out.correction);
-                let fan_duty = output_to_fan(thermal_out.correction);
-                // Thermal control via BU2505 DAC: ch1=HEATER, ch0=COOLER
-                // Duty 0-100% → DAC 0-4096mV (comparator on BIM switches FET)
-                let heater_mv = (heater_duty as u16) * 41; // 100% → 4100mV ≈ full scale
-                let fan_mv = (fan_duty as u16) * 41;
-                let _ = dac.set_voltage_mv(1, heater_mv); // HEATER_DAC_CHANNEL = 1
-                let _ = dac.set_voltage_mv(0, fan_mv);    // COOLER_DAC_CHANNEL = 0
+                // Guard: if NTC reads open circuit (999°C) or shorted (-999°C),
+                // don't drive thermal — leave heater/cooler off. This prevents
+                // the cooler FET from turning on when no DUT is socketed.
+                if temp_mc > -50_000 && temp_mc < 200_000 {
+                    let thermal_out = thermal.update(temp_mc);
+                    let heater_duty = output_to_heater(thermal_out.correction);
+                    let fan_duty = output_to_fan(thermal_out.correction);
+                    let heater_mv = (heater_duty as u16) * 41;
+                    let fan_mv = (fan_duty as u16) * 41;
+                    let _ = dac.set_voltage_mv(1, heater_mv);
+                    let _ = dac.set_voltage_mv(0, fan_mv);
+                } else {
+                    // Invalid temp — zero both DAC channels (heater + cooler off)
+                    let _ = dac.set_voltage_mv(1, 0);
+                    let _ = dac.set_voltage_mv(0, 0);
+                }
 
                 // Convert to 0.1°C for comparison with board_config
                 let temp_dc = (temp_mc / 100) as i16;
