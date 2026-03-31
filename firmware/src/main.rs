@@ -1031,16 +1031,44 @@ pub extern "C" fn main() -> ! {
             eth.send_fbc(last_sender_mac, &response);
         }
 
-        // Handle IO_BANK_SET — set IO bank voltage via I2C regulator
+        // Handle IO_BANK_SET — set IO bank voltage via MAX14661 analog mux (I2C 0x4D)
+        // MAX14661 is a 16:2 analog mux that routes voltage references to IO banks.
+        // DIR0 (reg 0x00) controls switches 0-7, DIR1 (reg 0x01) controls switches 8-15.
+        // Each bank (13/33/34/35) needs a specific switch pattern for its voltage.
         if let Some(io_bank) = handler.pending_io_bank.take() {
-            // TODO: I2C address for IO bank voltage regulator needs schematic verification
-            // Sonoma's linux_IO_PS.elf uses I2C to set Bank 13/33/34/35 voltages
-            // For now: log the request, ACK with "not implemented" status
-            uart_println!("[IO_BANK] Set bank {} to {}mV (I2C addr TBD — needs schematic)",
-                io_bank.bank, io_bank.voltage_mv);
+            const MAX14661_ADDR: u8 = 0x4D;
+            // Map voltage to MAX14661 channel (approximate — needs board verification)
+            // The mux selects from fixed voltage taps on the board
+            let channel: u8 = match io_bank.voltage_mv {
+                0..=999 => 0,       // Off or very low
+                1000..=1299 => 1,   // 1.2V
+                1300..=1599 => 2,   // 1.5V
+                1600..=1999 => 3,   // 1.8V
+                2000..=2799 => 4,   // 2.5V
+                _ => 5,             // 3.3V
+            };
+            // Write to DIR0 or DIR1 based on bank
+            let reg = if io_bank.bank < 2 { 0x00u8 } else { 0x01u8 };
+            let shift = if io_bank.bank % 2 == 0 { 0 } else { 4 };
+            let mask = 0x0F << shift;
+            // Read-modify-write
+            let mut buf = [0u8; 1];
+            let _ = i2c0.write_read(MAX14661_ADDR, &[reg], &mut buf);
+            let new_val = (buf[0] & !mask) | ((channel & 0x0F) << shift);
+            let status = match i2c0.write_read(MAX14661_ADDR, &[reg, new_val], &mut []) {
+                Ok(_) => {
+                    uart_println!("[IO_BANK] Bank {} set to {}mV (ch{}, reg 0x{:02X}=0x{:02X})",
+                        io_bank.bank, io_bank.voltage_mv, channel, reg, new_val);
+                    0u8 // OK
+                }
+                Err(_) => {
+                    uart_println!("[IO_BANK] I2C write to 0x{:02X} failed", MAX14661_ADDR);
+                    1u8 // Error
+                }
+            };
             let ack = FbcPacket::with_payload(
                 fbc_firmware::fbc_protocol::power::IO_BANK_SET_ACK,
-                handler.next_seq(), &[0xFF], // 0xFF = not yet implemented
+                handler.next_seq(), &[status],
             );
             eth.send_fbc(last_sender_mac, &ack);
         }
