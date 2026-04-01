@@ -345,6 +345,221 @@ static int parse_timing_section(StilSmartState *st, FILE *f)
 }
 
 /* ═══════════════════════════════════════════════════════════════
+ * PATTERN PARSER — extracts vectors from Pattern { } section
+ * ═══════════════════════════════════════════════════════════════ */
+
+/* Find signal index by name, or -1 if not found */
+static int stil_find_signal(StilSmartState *st, const char *name)
+{
+    for (int i = 0; i < st->num_signals; i++) {
+        if (strcasecmp(st->signal_name[i], name) == 0)
+            return i;
+    }
+    return -1;
+}
+
+/* Parse vector data from STIL V { } statement */
+static int parse_vector_data(StilSmartState *st, const char *data, uint8_t *states)
+{
+    /* Initialize all to don't-care */
+    for (int i = 0; i < PC_MAX_CH; i++)
+        states[i] = (uint8_t)PS_DONT_CARE;
+
+    /* STIL vector format: signal_name=value; or signal_group=bits; */
+    const char *p = data;
+    int vectors_parsed = 0;
+
+    while (*p) {
+        /* Skip whitespace */
+        while (*p && isspace((unsigned char)*p)) p++;
+        if (!*p) break;
+
+        /* Find signal name (before '=') */
+        const char *name_start = p;
+        while (*p && *p != '=' && !isspace((unsigned char)*p)) p++;
+        if (*p != '=') break;
+
+        int name_len = (int)(p - name_start);
+        if (name_len == 0 || name_len >= PC_MAX_NAME) break;
+
+        char sig_name[PC_MAX_NAME];
+        strncpy(sig_name, name_start, name_len);
+        sig_name[name_len] = '\0';
+
+        p++; /* skip '=' */
+
+        /* Find value (until ';' or whitespace) */
+        const char *val_start = p;
+        while (*p && *p != ';' && !isspace((unsigned char)*p)) p++;
+        int val_len = (int)(p - val_start);
+
+        /* Find the signal */
+        int sig_idx = stil_find_signal(st, sig_name);
+
+        if (sig_idx >= 0 && sig_idx < PC_MAX_CH) {
+            /* Single-bit value */
+            if (val_len == 1) {
+                states[sig_idx] = (uint8_t)pc_char_to_state(val_start[0]);
+                vectors_parsed++;
+            }
+            /* Multi-bit value (for groups) — distribute across group signals */
+            else if (val_len > 1) {
+                /* For now, just use first character */
+                states[sig_idx] = (uint8_t)pc_char_to_state(val_start[0]);
+                vectors_parsed++;
+            }
+        }
+
+        /* Skip to next field */
+        while (*p && *p != ';') p++;
+        if (*p == ';') p++;
+    }
+
+    return vectors_parsed;
+}
+
+/* Parse Pattern section and extract vectors */
+static int parse_patterns_section(StilSmartState *st, FILE *f, PcPattern *p)
+{
+    char line[LINE_BUF];
+    int in_pattern = 0;
+    int in_vector = 0;
+    char vector_data[LINE_BUF * 4];  /* Accumulate multi-line vectors */
+    int vector_len = 0;
+    uint64_t loop_count = 0;
+    int loop_depth = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        char *s = stil_trim(line);
+
+        /* Skip comments */
+        if (s[0] == '/' || (s[0] == '}' && !in_pattern)) continue;
+
+        /* Pattern start: Pattern name { */
+        if (strncmp(s, "Pattern", 7) == 0) {
+            in_pattern = 1;
+            /* Extract pattern name */
+            char *name_start = s + 7;
+            while (*name_start && isspace((unsigned char)*name_start)) name_start++;
+            char *name_end = strchr(name_start, ' ');
+            if (!name_end) name_end = strchr(name_start, '{');
+            if (name_end && p->name[0] == '\0') {
+                int len = (int)(name_end - name_start);
+                if (len > 0 && len < PC_MAX_NAME) {
+                    strncpy(p->name, name_start, len);
+                    p->name[len] = '\0';
+                }
+            }
+            continue;
+        }
+
+        if (!in_pattern) continue;
+
+        /* Pattern end */
+        if (in_pattern && s[0] == '}' && !in_vector && loop_depth == 0) {
+            break;
+        }
+
+        /* Loop statement: Loop N { */
+        if (strncmp(s, "Loop", 4) == 0) {
+            char *num_start = s + 4;
+            while (*num_start && isspace((unsigned char)*num_start)) num_start++;
+            loop_count = strtoull(num_start, NULL, 10);
+            loop_depth++;
+            continue;
+        }
+
+        /* End of loop */
+        if (s[0] == '}' && loop_depth > 0) {
+            loop_depth--;
+            continue;
+        }
+
+        /* Waveform reference: W waveform_name; — skip */
+        if (s[0] == 'W' || strncmp(s, "W ", 2) == 0) {
+            continue;
+        }
+
+        /* Annotation: Ann {* ... *} — skip */
+        if (strncmp(s, "Ann", 3) == 0 || strncmp(s, "//", 2) == 0) {
+            continue;
+        }
+
+        /* Vector start: V { */
+        if (s[0] == 'V' && strchr(s, '{')) {
+            in_vector = 1;
+            vector_len = 0;
+            vector_data[0] = '\0';
+
+            /* Check if vector data is on same line */
+            char *brace = strchr(s, '{');
+            if (brace) {
+                brace++;
+                while (*brace && isspace((unsigned char)*brace)) brace++;
+                if (*brace && *brace != '}') {
+                    /* Data on same line */
+                    char *end = strchr(brace, '}');
+                    if (end) {
+                        int len = (int)(end - brace);
+                        if (len > 0 && vector_len + len < (int)sizeof(vector_data) - 1) {
+                            strncpy(vector_data + vector_len, brace, len);
+                            vector_len += len;
+                        }
+                        in_vector = 0;
+                    } else {
+                        strncpy(vector_data + vector_len, brace, sizeof(vector_data) - vector_len - 1);
+                        vector_len = (int)strlen(vector_data);
+                    }
+                }
+            }
+            continue;
+        }
+
+        /* Vector data continuation */
+        if (in_vector) {
+            char *end = strchr(s, '}');
+            if (end) {
+                *end = '\0';
+                in_vector = 0;
+            }
+            if (vector_len + (int)strlen(s) < (int)sizeof(vector_data) - 1) {
+                strncpy(vector_data + vector_len, s, sizeof(vector_data) - vector_len - 1);
+                vector_len = (int)strlen(vector_data);
+            }
+        }
+
+        /* Process complete vector */
+        if (!in_vector && vector_len > 0) {
+            /* Parse vector data into states */
+            uint8_t states[PC_MAX_CH];
+            int parsed = parse_vector_data(st, vector_data, states);
+
+            if (parsed > 0) {
+                /* Create vector struct */
+                PcVector vec = {0};
+                for (int i = 0; i < PC_MAX_CH; i++) {
+                    vec.states[i] = states[i];
+                }
+                vec.repeat = loop_count > 0 ? loop_count : 1;
+
+                /* Add to pattern */
+                int rc = pc_pattern_add_vector(p, &vec);
+                if (rc != PC_OK) {
+                    snprintf(p->errmsg, PC_MAX_ERR, "Failed to add vector");
+                    return PC_ERR_ALLOC;
+                }
+            }
+
+            vector_len = 0;
+            vector_data[0] = '\0';
+            if (loop_depth == 0) loop_count = 0;
+        }
+    }
+
+    return p->num_vectors > 0 ? PC_OK : PC_ERR_FORMAT;
+}
+
+/* ═══════════════════════════════════════════════════════════════
  * MAIN SMART STIL PARSER
  * ═══════════════════════════════════════════════════════════════ */
 
@@ -397,6 +612,18 @@ int pc_parse_stil_smart(PcPattern *p, const char *path)
     if (st.timing_set[0]) {
         snprintf(p->name, PC_MAX_NAME, "%s_%s", p->name, st.timing_set);
     }
+
+    rewind(f);
+
+    /* Phase 5: Parse Pattern section and extract vectors */
+    rc = parse_patterns_section(&st, f, p);
+    if (rc != PC_OK) {
+        fclose(f);
+        snprintf(p->errmsg, PC_MAX_ERR, "STIL Patterns: %s", st.errmsg);
+        return rc;
+    }
+
+    fclose(f);
 
     return PC_OK;
 }

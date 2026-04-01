@@ -273,5 +273,34 @@ int pc_parse_avc_smart(PcPattern *p, const char *path)
     snprintf(p->name, PC_MAX_NAME, "AVC_%s_T%.0fC",
              st.timing_sets[0], st.inferred_temp);
 
+    /* ═══════════════════════════════════════════════════════════════
+     * Phase 5: Convert string vectors → PcVector structs
+     * This is the critical step that was missing!
+     * ═══════════════════════════════════════════════════════════════ */
+
+    for (int v = 0; v < st.num_vectors; v++) {
+        PcVector vec = {0};
+        vec.repeat = (uint64_t)st.repeat_counts[v];
+
+        /* Convert each character to PinState */
+        const char *vec_str = st.vector_data[v];
+        int len = (int)strlen(vec_str);
+
+        for (int ch = 0; ch < len && ch < PC_MAX_CH; ch++) {
+            vec.states[ch] = (uint8_t)pc_char_to_state(vec_str[ch]);
+        }
+        /* Fill remaining channels with don't-care */
+        for (int ch = len; ch < PC_MAX_CH; ch++) {
+            vec.states[ch] = (uint8_t)PS_DONT_CARE;
+        }
+
+        /* Add to pattern */
+        int rc = pc_pattern_add_vector(p, &vec);
+        if (rc != PC_OK) {
+            snprintf(p->errmsg, PC_MAX_ERR, "Failed to add vector %d", v);
+            return PC_ERR_ALLOC;
+        }
+    }
+
     return PC_OK;
 }
