@@ -493,8 +493,11 @@ pub extern "C" fn main() -> ! {
                 PendingVicor::StatusReq => {
                     let vicor_status = vicor.get_status();
                     let mut status_arr = [(false, 0u16, 0u16); 6];
+                    let i_core1 = analog_monitor.read(24).map(|r| r.value as u16).unwrap_or(0);
+                    let i_core2 = analog_monitor.read(25).map(|r| r.value as u16).unwrap_or(0);
+                    let currents = [i_core1, i_core2, 0, 0, 0, 0];
                     for (i, (enabled, voltage)) in vicor_status.iter().enumerate() {
-                        status_arr[i] = (*enabled, *voltage, 0);
+                        status_arr[i] = (*enabled, *voltage, currents[i]);
                     }
                     let response = handler.build_vicor_status_response(&status_arr);
                     eth.send_fbc(last_sender_mac, &response);
