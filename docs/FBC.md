@@ -224,7 +224,7 @@ in the LRM database — the board doesn't need ASCII strings.
 - `voltage_cal[]` → **applied** to ADC readings via `BoardConfig.calibrate_voltage()`
 - `current_cal[]` → **applied** to current readings via `BoardConfig.calibrate_current()`
 - PMBUS_SET_VOLTAGE (0x87): **full pipeline** — host `pmbus_set_voltage()` + firmware safety check + CLI `pmbus-set-voltage`
-- Clock configure: **re-enabled** — clk_ctrl AXI crash fixed March 25
+- Clock configure: **clk_wiz DRP** — hand-rolled clk_ctrl replaced with Vivado IP (v7d, April 6)
 
 **Remaining gaps:**
 - `program_count` — incremented on write, not tracked by host.
@@ -774,8 +774,8 @@ All command codes defined in `firmware/src/fbc_protocol.rs:27-132`.
 | axi_fbc_ctrl | 0x4004_0000 | 4KB | FBC decoder control |
 | io_config | 0x4005_0000 | 4KB | Pin type config (4-bit per pin) |
 | axi_vector_status | 0x4006_0000 | 4KB | Vector engine status |
-| axi_freq_counter | 0x4007_0000 | 4KB | 8-channel frequency counter |
-| clk_ctrl | 0x4008_0000 | 4KB | Clock control |
+| (removed) | 0x4007_0000 | — | freq_counter removed April 6 |
+| clk_wiz_0 (Vivado IP) | 0x4008_0000 | 4KB | Clock DRP reconfiguration (replaces hand-rolled clk_ctrl) |
 | error_bram | 0x4009_0000 | 4KB | Error log (3x BRAM) |
 | axi_device_dna | 0x400A_0000 | 4KB | 57-bit silicon ID (DNA_LO/HI/STATUS, read-only) |
 | fbc_dma | 0x4040_0000 | 4KB | AXI DMA |
@@ -878,7 +878,7 @@ fbc_dma.v reads 4 × 64-bit HP0 beats per word. axi_stream_fbc.v extracts
 
 Full command sweep on calibration board (12V/0.22A, no DUT/BIM/48V/LCPS).
 19 pass, 2 expected timeouts (correct behavior). All crashes fixed.
-SD crash, pmbus-status timeout, and clk_ctrl crash all FIXED.
+SD crash, pmbus-status timeout FIXED. clk_ctrl replaced with clk_wiz (April 6).
 
 | Command | Result | Notes |
 |---------|--------|-------|
@@ -895,7 +895,7 @@ SD crash, pmbus-status timeout, and clk_ctrl crash all FIXED.
 | fastpins read | ✅ PASS | din/dout/oen = 0x00000000 |
 | set-fastpins | ✅ PASS | Wrote dout=0xDEADBEEF oen=0xFFFFFFFF |
 | fastpins readback | ✅ PASS | **Round-trip verified**: dout=0xDEADBEEF confirmed |
-| configure | ✅ PASS | ACK received, clock write works (clk_ctrl AXI crash FIXED in March 25 bitstream) |
+| configure | ⚠️ PENDING | clk_wiz DRP (v7d bitstream), awaiting first hardware test |
 | emergency-stop | ✅ PASS | Immediate ACK |
 | stop | ✅ PASS | Stopped |
 | pause | ⏱️ TIMEOUT | Expected — state is Idle, not Running (handler returns None) |
@@ -908,7 +908,7 @@ SD crash, pmbus-status timeout, and clk_ctrl crash all FIXED.
 
 | # | Bug | Severity | Status |
 |---|-----|----------|--------|
-| 1 | ~~**clk_ctrl AXI crash**~~ — writing to 0x4008_0000 caused Data Abort | ~~HIGH~~ | ✅ FIXED — root cause: incomplete `case` statements in AXI write FSM (missing `default:` arms). Fixed in `clk_ctrl.v`, verified on hardware March 25: `configure --clock 3` succeeds, board survives. |
+| 1 | ~~**clk_ctrl AXI crash**~~ — reading/writing 0x4008_0000 at runtime hung ARM | ~~HIGH~~ | ✅ FIXED April 6 — root cause: Vivado optimizer removed AXI read path from hand-rolled clk_ctrl. Replaced with Vivado clk_wiz IP (DRP). v7d bitstream WNS=+0.028ns. Pending hardware verification. |
 | 2 | ~~**SD commands crash**~~ — was using uninitialized SDHCI | ~~HIGH~~ | ✅ FIXED — `sd_init_ok` guard added |
 | 3 | ~~**XADC temp wrong**~~ — u32 overflow (`as u32` → `as u64`). | ~~LOW~~ | ✅ FIXED — verified on hardware March 25: reads 39.5°C (was -220°C). |
 | 4 | **pause/resume timeout when Idle** — CLI shows "Timeout" instead of useful message | LOW | UX improvement needed |
@@ -918,7 +918,7 @@ SD crash, pmbus-status timeout, and clk_ctrl crash all FIXED.
 | What | Why | Priority |
 |------|-----|----------|
 | Vector upload + run + GPIO toggle | Pipeline wired (decompressor+OEN+DMA fixed), need 48V/tray for BIM pins. Fast pins (128-159) could run on 12V only but no DUT to verify | **NEXT** |
-| ~~clk_ctrl AXI register read/write~~ | ~~Write crashes board~~ | ✅ **FIXED** — `configure --clock 3` works, board survives |
+| ~~clk_ctrl → clk_wiz~~ | ~~Hand-rolled AXI crashed at runtime~~ | ✅ **REPLACED** — Vivado clk_wiz IP (v7d, April 6). Pending hardware test. |
 | VICOR with real load | Cal board has no DUT, no 48V | After BIM board |
 | PMBus control | No LCPS on cal board | After rack setup |
 | Firmware update pipeline | Code exists, untested | Low |
@@ -934,7 +934,7 @@ SD crash, pmbus-status timeout, and clk_ctrl crash all FIXED.
 - ✅ **BOOT.BIN packaged** — FSBL + bitstream + firmware ELF, deployed via JTAG
 - ✅ **DNA-based unique MAC** — `00:0A:35:C6:B4:2A` (was `00:0A:35:AD:00:02` CPU ID fallback)
 - ✅ **XADC temperature** — reads 39.5°C (confirms u64 overflow fix — was -220°C)
-- ✅ **clk_ctrl AXI write** — `configure --clock 3` succeeds, board survives (was Data Abort crash)
+- ✅ **clk_wiz DRP** — replaces clk_ctrl (v7d, April 6). Runtime clock switching via Xilinx IP. Pending hardware test.
 - ✅ **160/160 pin assignments verified** — XDC matches Sonoma reference exactly (all banks, drive strengths, I/O standards)
 
 **Next steps:**
@@ -950,7 +950,7 @@ SD crash, pmbus-status timeout, and clk_ctrl crash all FIXED.
 - ✅ **Vector LOAD/START/STOP (0xB2/0xB4/0xB7)** — dispatch arms added. LOAD returns 0xFF (needs SD cache), START/STOP delegate to runtime handlers.
 - ✅ **MAC collision** — all boards had identical MAC from ARM MIDR. Added `axi_device_dna.v` (DNA_PORT → AXI at 0x400A_0000). Each board now gets unique MAC from silicon DNA. **Verified on hardware:** MAC `00:0A:35:C6:B4:2A` (unique per chip).
 - ✅ **DNA guard** — firmware checks FBC_CTRL VERSION at `0x4004_001C` (not offset 0x00 which is CTRL, always 0 at reset). Falls back to CPU ID MAC if VERSION=0 or 0xFFFFFFFF.
-- ✅ **clk_ctrl AXI crash (bug #22)** — root cause: incomplete `case` statements in `clk_ctrl.v` AXI write FSM. Unhandled address ranges caused undefined behavior. Fix: added `default: ;` to both write case statements. Verified on hardware: `configure --clock 3` succeeds, board survives.
+- ✅ **clk_ctrl → clk_wiz (bug #22)** — root cause: Vivado optimizer removed hand-rolled AXI read response path (constant propagation collapsed freq_sel). 6 bitstream rebuilds to diagnose. Fix: replaced with Vivado clk_wiz IP (DRP). v7d bitstream: WNS=+0.028ns.
 - ✅ **XADC temperature** — u32 overflow confirmed as entire bug. Reads 39.5°C on hardware (was -220°C).
 - ✅ **Bitstream rebuilt with timing closure** — WNS went from -7.227ns to +0.018ns. Fixes: CDC constraints (`set_clock_groups -logically_exclusive` for MMCM, `set_false_path` for all cross-domain), local `vec_clk_cnt` register in `io_cell.v` (broke 5.5ns routing path to 160 pin cells).
 - ✅ **Pinout verified** — 160/160 GPIO pin assignments match Sonoma reference `gpio_old_board.xdc` exactly. All banks, drive strengths (8mA/4mA), I/O standards (LVCMOS25/LVDS_25).
