@@ -1,6 +1,7 @@
 # CLAUDE.md — FBC Semiconductor System
 
-Ground truth from code-level audit (March 2026). Every claim verified by reading source.
+Ground truth from code-level audit. Last major update: April 6, 2026.
+Every claim verified by reading source.
 
 ---
 
@@ -91,8 +92,8 @@ PinStimuli (PULSE/NPULSE/INPUT edge timing), Pattern (.hex file list), Sequencin
 | Register access | `firmware/src/regs.rs` | All FPGA register offsets (verified vs RTL) |
 | Device DNA / MAC | `rtl/axi_device_dna.v` + `firmware/src/hal/dna.rs` | Silicon ID → unique MAC per board |
 | Main firmware loop | `firmware/src/main.rs` | Boot, networking, command dispatch, slot/plan integration |
-| SD + DDR double-buffer | `firmware/src/ddr_slots.rs` | SD pattern library (256 max) + DDR double-buffer (A/B regions), BIM serial invalidation |
-| Test plan executor | `firmware/src/testplan.rs` | Autonomous burn-in state machine, checkpoint persistence |
+| SD + DDR double-buffer | `firmware/src/ddr_slots.rs` | SD pattern library (256 max) + DDR double-buffer (A/B regions, 252+256MB), non-blocking chunked loading |
+| Test plan executor | `firmware/src/testplan.rs` | Autonomous burn-in (96 steps max), per-step temp/clock, checkpoint persistence |
 | GUI protocol client | `gui/src-tauri/src/fbc.rs` | Socket, types, constants |
 | GUI state machine | `gui/src-tauri/src/state.rs` | All command send/recv, payload parsing |
 | JTAG programmer | `C:\Dev\xyzt_pico_Hardware\fpga_jtag.py` | Multi-device JTAG, programs PL via FT232H |
@@ -474,7 +475,7 @@ Per-axis layout identical: 96 drive + 60 monitor + 4 reserved = 160 channels.
 
 ```
 ├── rtl/                   # 16 Verilog modules (VERIFIED, programmed on hardware)
-│   ├── system_top.v       # Top: PS7 + clk_gen + clk_ctrl + freq_counter + fbc_top + fbc_dma + 3×error_bram
+│   ├── system_top.v       # Top: PS7 + clk_wiz + fbc_top + fbc_dma + 3×error_bram + device_dna
 │   ├── fbc_top.v          # FBC core: io_config + io_bank + axi_stream_fbc + fbc_decoder + vector_engine + error_counter + axi_fbc_ctrl + axi_vector_status
 │   ├── fbc_dma.v          # AXI DMA: HP0 DDR read → 256-bit AXI-Stream to fbc_decoder
 │   └── (13 more)          # io_cell, clk_gen, error_bram, etc.
@@ -483,10 +484,10 @@ Per-axis layout identical: 96 drive + 60 monitor + 4 reserved = 160 channels.
 ├── firmware/              # ARM Cortex-A9 bare-metal Rust (30 source files)
 │   └── src/
 │       ├── main.rs        # Entry, boot, main loop
-│       ├── fbc_protocol.rs # 79 commands across 13 subsystems
+│       ├── fbc_protocol.rs # 79 commands across 13 subsystems (+ MIN_MAX 0xF2/F3, IO_BANK 0x35/36)
 │       ├── regs.rs        # FPGA register access
 │       ├── dma.rs         # AXI DMA + FbcStreamer + stream_from_ddr()
-│       ├── ddr_slots.rs   # SD pattern library + DDR double-buffer (A/B regions)
+│       ├── ddr_slots.rs   # SD pattern library (256 max) + DDR double-buffer (A/B regions, non-blocking chunked load)
 │       ├── testplan.rs    # Autonomous burn-in state machine (PlanExecutor)
 │       ├── analog.rs      # 32-ch ADC (XADC + MAX11131)
 │       ├── net.rs         # Zynq GEM Ethernet driver
@@ -508,13 +509,13 @@ Per-axis layout identical: 96 drive + 60 monitor + 4 reserved = 160 channels.
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **PL (FPGA)** | ✅ **REBUILT March 25** | Full timing closure WNS=+0.018ns. All 8 AXI peripherals including `axi_device_dna.v`. Deployed via JTAG. |
-| **PS (ARM Firmware)** | ✅ **DEPLOYED March 25** | All fixes compiled (0 warnings, 36 tests), deployed via JTAG, verified on hardware |
+| **PL (FPGA)** | ✅ **v7d April 6** | clk_wiz IP replaces hand-rolled clk_ctrl. WNS=+0.028ns. freq_counter removed. 7 AXI peripherals + clk_wiz. |
+| **PS (ARM Firmware)** | ✅ **April 6** | clk_wiz DRP, headroom thermal, SD double-buffer, ADC CS2 fix, VICOR current readback. 0 warnings. |
 | **VICOR GPIO** | ✅ FIXED | SLCR MIO mux for 6 VICOR pins `[0, 39, 47, 8, 38, 37]` — all 6 including MIO0 (Core 1) |
-| **CLI Live Test** | ✅ **21 commands tested March 24-25** | 19 pass, 2 expected timeouts. All crashes fixed (clk_ctrl + SD). See `docs/FBC.md` |
+| **CLI Live Test** | ✅ **12/12 tested March 30** | All respond. Clock configure pending v7d hardware test. 38 FBC + 23 Sonoma CLI commands. |
 | **LEDs** | ❌ NONE | Board has NO firmware-controllable LEDs. Only 3.3V (green, power) + DONE (blue, FPGA config) — both hardware-driven |
 | **Error BRAM** | ✅ WIRED | 3× BRAMs at 0x4009_0000, protocol handler added |
-| **clk_ctrl** | ✅ **FIXED March 25** | Root cause: incomplete `case` in AXI write FSM. Added `default:` arms. Verified: `configure --clock 3` works. |
+| **clk_ctrl → clk_wiz** | ✅ **REPLACED April 6** | Hand-rolled clk_ctrl had AXI runtime crash (optimizer removed read path). Replaced with Vivado clk_wiz IP (DRP). v7d bitstream: WNS=+0.028ns. Pending hardware verification. |
 | **SD Card** | ✅ FIXED | `sd_init_ok` guard added — returns error when no SD card instead of crashing |
 | **Device DNA** | ✅ **VERIFIED March 25** | Unique MAC `00:0A:35:C6:B4:2A` from silicon DNA. Firmware reads FBC_CTRL VERSION at 0x4004_001C to confirm peripheral. |
 | **XADC Temp** | ✅ **VERIFIED March 25** | Reads 39.5°C (was -220°C before u64 overflow fix) |
@@ -537,7 +538,7 @@ GUI (Tauri) ──Raw Ethernet 0x88B5──▶ Firmware (bare-metal Rust on Cort
                                          │
        ┌──────────┬──────────┬───────────┼───────────┬──────────┬──────────┬──────────┐
        ▼          ▼          ▼           ▼           ▼          ▼          ▼          ▼
-  fbc_ctrl   io_config   vec_status  clk_ctrl  freq_counter err_bram  device_dna  fbc_dma
+  fbc_ctrl   io_config   vec_status  clk_wiz   (removed)    err_bram  device_dna  fbc_dma
   0x4004_0   0x4005_0    0x4006_0   0x4008_0   0x4007_0    0x4009_0  0x400A_0    0x4040_0
   ctrl/stat  pin types   error/vec  freq_sel   4ch meas    3×BRAM    57-bit DNA  HP0 DMA
        │          │          ▲           │                     ▲          │
@@ -565,14 +566,14 @@ GUI (Tauri) ──Raw Ethernet 0x88B5──▶ Firmware (bare-metal Rust on Cort
 30. ~~**Rust compiler emit_run off-by-one**~~ — **FIXED March 25**. When vec == prev, `emit_run` skipped emitting the vector but used `count-1` for RUN. Fixed: uses `count` when vector not emitted.
 20. **Vector data truncation** — `fbc_decompress.rs:259` copies only 16/20 bytes (128 bits) per vector. Fast pins (128-159) never driven by test vectors. Matches `axi_stream_fbc.v:59` 128-bit bus width. Needs architectural decision: document as constraint, firmware workaround, or RTL fix.
 21. **PATTERN_REP -1 undocumented** — `fbc_decompress.rs:273` subtracts 1 from repeat count. Convention not documented in `fbc_pkg.vh`. Off-by-one risk for encoder authors.
-22. ~~**clk_ctrl AXI crash**~~ — **FIXED March 25**. Root cause: incomplete `case` statements in `clk_ctrl.v` AXI write FSM — missing `default:` arms for unhandled address ranges. Fixed in bitstream rebuild. Verified on hardware: `configure --clock 3` succeeds, board survives.
+22. ~~**clk_ctrl AXI crash**~~ — **FIXED April 6**. Root cause: Vivado optimizer removed hand-rolled AXI read path. Replaced with Vivado clk_wiz IP (DRP). v7d bitstream: WNS=+0.028ns. Pending hardware verification.
 23. ~~**SD commands crash board**~~ — **FIXED March 24**. Root cause was uninitialized SDHCI (not byte writes as originally thought). `sd_init_ok` guard added in `main.rs:394-420`.
 24. ~~**XADC temp wrong**~~ — **FIXED and VERIFIED March 25**. u32 overflow in `xadc.rs:242` (`as u32` → `as u64`). `raw * 503975` overflows u32 for raw > 8522. Hardware reads 39.5°C (was -220°C). DUT thermal from MAX11131 ch 22-23 (THERM_CASE/THERM_DUT NTC on calibration BIM). Thermal controller v2 (`thermal.rs`) wired into main.rs.
 
 All previously-listed bugs (1-5, 7-10, 12-15) are **FIXED**. Bug 20a (Error BRAM cycle offset) **FIXED March 24** — `regs.rs` read 0x1C/0x20 instead of 0x18/0x1C.
 25. ~~**MAC collision**~~ — **FIXED March 24**. All Zynq 7020 have identical ARM MIDR (0x413FC090), so `dna.rs:from_cpu_id()` gave every board the same MAC `00:0A:35:AD:C0:90`. Fix: added `axi_device_dna.v` (DNA_PORT primitive → AXI registers at 0x400A_0000). `dna.rs:read_from_fpga()` now reads real 57-bit silicon DNA. Each board gets a unique MAC derived from fuse-programmed silicon ID.
 26. ~~**NTC thermistor formula wrong**~~ — **FIXED (deployed March 25)**. `analog.rs` used linear approximation (ignored B coefficient entirely: `let _ = b_coeff;`), wrong divider topology (NTC on bottom vs Sonoma's NTC on top), wrong pullup (10kΩ vs 4.98kΩ). Now: proper B-equation + `ln_approx()`, Sonoma-matched divider (4980Ω pulldown + 150Ω series), default 30kΩ NTC (B=3985.3), `set_ntc_type()` for 10kΩ (B=3492.0). `read_case_temp_mc()`/`read_dut_temp_mc()` added.
-27. ~~**Thermal controller not wired**~~ — **FIXED (deployed March 25)**. `thermal.rs` v2 (P+I+D+feedforward with crystallization decay) wired into `main.rs`. `Thermal` created at boot, target from `board_config.temp_setpoint_dc()`, `update()` called every ~500ms with THERM_CASE temp (fallback XADC), target updates on SET_OVERRIDE 0x80. Simulation: +0.3°C overshoot, instant settle. Heater/fan duty cycles computed, not routed to GPIO/PWM yet.
+27. ~~**Thermal controller not wired**~~ — **FIXED**. PID replaced with Lean-verified headroom kernel (MetabolicAge_v3.lean, Theorem 68a-e). 0 tuned constants. BU2505 DAC ch0=cooler, ch1=heater → comparator on BIM → STD16NF06LT4 FET. V×I power feedback from ADC ch24-25. Per-step temp in test plan.
 28. ~~**DNA peripheral not in bitstream**~~ — **FIXED and VERIFIED March 25**. Bitstream rebuilt with `axi_device_dna.v`. Firmware reads FBC_CTRL VERSION at `0x4004_001C` (offset 0x1C, not 0x00 which is CTRL register — always 0 at reset). VERSION=0x0001_0000 confirms DNA peripheral present. Hardware MAC: `00:0A:35:C6:B4:2A` (unique per silicon DNA).
 
 ---
@@ -586,7 +587,7 @@ Quick reference — base addresses:
 - `0x4005_0000` io_config (160 pin types + pulse control)
 - `0x4006_0000` axi_vector_status (ERROR_COUNT, VECTOR_COUNT, FIRST_ERR)
 - `0x4007_0000` axi_freq_counter (4 channels, unused)
-- `0x4008_0000` clk_ctrl (FREQ_SEL: 0=5MHz...4=100MHz) — ✅ FIXED March 25
+- `0x4008_0000` clk_wiz (Vivado IP, AXI-Lite DRP for runtime MMCM reconfiguration) — v7d April 6
 - `0x4009_0000` error_bram (3× BRAMs: pattern/vector/cycle)
 - `0x400A_0000` axi_device_dna (57-bit silicon ID: DNA_LO/DNA_HI/DNA_STATUS, read-only)
 - `0x4040_0000` fbc_dma (MM2S: SA + LENGTH triggers transfer)
@@ -736,7 +737,10 @@ no amount of React components will fix it.
 29. ~~**DDR slot table + test plan executor**~~ — **DONE March 26, redesigned March 29**. SD pattern storage (256 max) + DDR double-buffer (A/B regions) replaces fixed 8-slot model. PlanExecutor with `pattern_id` references, per-step temp+clock, checkpoint persistence. MAX_STEPS bumped to 96 (real projects: up to 91).
 30. ~~**Cisco switch GUI integration**~~ — **DONE March 26**. Serial console in Facility→Network tab, MAC→board cross-reference, VLAN reconfiguration.
 31. ~~**Firmware FEATURE-COMPLETE (March 28)**~~ — **DONE March 29**. All Sonoma gaps closed. Compiles clean (43 tests, 0 warnings). DDR slots + test plan executor + thermal DAC + V×I feedback + undervoltage + per-step temp+clock + IO bank + min/max XADC + network health.
-32. **Hardware validation** — all code-complete features need first run on real board after deploy.
+32. ~~**Hardware validation (March 30)**~~ — **12/12 commands verified on hardware**. XADC reads correct (VCCINT=1001mV, VCCAUX=1795mV, 41°C die temp). Analog first-read timeout fixed (SPI 10ms→100µs). Safety monitor runs continuously.
+33. ~~**clk_wiz replacement (April 6)**~~ — **DONE**. Hand-rolled clk_ctrl replaced with Vivado clk_wiz IP. v7d bitstream WNS=+0.028ns. Firmware uses DRP registers. Pending hardware clock switching test.
+34. **April updates:** Headroom thermal kernel (Lean-verified, replaces PID), VICOR current readback, gen-bim CLI command, AVC/STIL parser fixes, ADC CS2 fix, XADC scaling fix (÷65536), repl.rs registered, datalog .fbd format.
+35. **Next: 48V power-on test** — connect 48V, verify PMBus/VICOR/ADC with real supplies. Program EEPROM. Run first vectors.
 
 ### What the GUI is NOT
 
