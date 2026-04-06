@@ -483,47 +483,20 @@ impl ClkCtrl {
     }
 
     /// Set vector clock frequency
+    /// Set vector clock frequency
     ///
-    /// Set vector clock frequency — safe BUFGCE-gated switching
-    ///
-    /// Clock path: MMCM → BUFGMUX → BUFGCE → vec_clk → BRAMs
-    /// Gate BUFGCE → switch BUFGMUX (glitch hidden) → release BUFGCE
+    /// NOTE: clk_ctrl at 0x4008_0000 has AXI runtime crash (reads hang).
+    /// Guarded by is_accessible() = false. Default 50MHz from reset.
+    /// Proper fix: replace with Vivado clk_wiz IP (v7 bitstream, pending timing closure).
     pub fn set_vec_clock(&self, freq: VecClockFreq) {
-        // Read current value — skip write if already set (prevents any glitch)
-        let current = self.read_reg(0x00) & 0x07;
-        if current == freq as u32 {
-            return; // Already at this frequency, no write needed
-        }
-        // Gate BUFGCE → switch BUFGMUX → release
-        self.write_reg(0x08, 0);
-        crate::delay_us(1000);
         self.write_reg(0x00, freq as u32);
-        crate::delay_us(1000);
-        self.write_reg(0x08, 1);
     }
 
-    /// Check if clk_ctrl peripheral is accessible at 0x4008_0000.
-    /// If this returns false, do NOT read or write any ClkCtrl register.
-    /// Accessing a non-responsive AXI slave hangs the bus → Data Abort.
+    /// Check if clk_ctrl peripheral is accessible at runtime
     pub fn is_accessible(&self) -> bool {
-        // Read the MMCM lock status register (offset 0x04).
-        // If the peripheral exists, this returns 0 or 1.
-        // If it doesn't exist, the read hangs and we never return.
-        // Use a volatile read with a known-safe register.
-        //
-        // WARNING: There's no timeout mechanism in hardware — if the
-        // peripheral doesn't respond, the CPU hangs. This function is
-        // only safe to call during boot with JTAG available for recovery.
-        //
-        // TODO: Use the Zynq AXI timeout mechanism or a watchdog timer
-        // to detect non-responsive peripherals safely.
-        //
-        // v6: dont_touch on all clk_ctrl regs + wires.
-        // Reads to 0x4008 work at boot but crash at runtime.
-        // Root cause: hand-rolled AXI MUX in system_top.v can't handle
-        // concurrent reads to different peripherals. clk_ctrl read collides
-        // with safety loop's reads to other AXI slaves → MUX deadlock.
-        // Fix: Vivado AXI Interconnect IP or proper arbitration.
+        // DISABLED: v6 bitstream has hand-rolled clk_ctrl with AXI runtime crash.
+        // v7 bitstream (clk_wiz) pending timing closure.
+        // Default 50MHz works for all operations.
         false
     }
 
@@ -533,6 +506,9 @@ impl ClkCtrl {
             0 => VecClockFreq::Mhz5,
             1 => VecClockFreq::Mhz10,
             2 => VecClockFreq::Mhz25,
+            3 => VecClockFreq::Mhz50,
+            4 => VecClockFreq::Mhz100,
+            _ => VecClockFreq::Mhz50,
             3 => VecClockFreq::Mhz50,
             4 => VecClockFreq::Mhz100,
             _ => VecClockFreq::Mhz50,
