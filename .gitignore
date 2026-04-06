@@ -64,3 +64,18 @@ vivado.log
 vivado_*.backup.jou
 vivado_*.backup.log
 *.jou
+
+# Private docs — do not push to public repo
+# (source code with these names stays tracked — build needs them)
+SONOMA-INSTRUCTIONS.md
+docs/SONOMA.md
+docs/SONOMA_VS_FBC.md
+docs/HX_XP160_*.md
+docs/XPS_DRIVER_*.md
+QWEN.md
+Qwen_Implementation/
+temp_onedrive/
+reference/IP132*/
+reference/sonoma_docs/
+ecosystem.html
+onetwo.c
