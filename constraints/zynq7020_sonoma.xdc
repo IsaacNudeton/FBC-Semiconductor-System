@@ -263,12 +263,8 @@ set_property DRIVE 4 [get_ports {gpio[20]}]
 # ... (remaining pins get 4mA by default)
 
 #==============================================================================
-# Clock MUX Cascade Override
+# Clock MUX Cascade Override — REMOVED (clk_wiz replaces BUFGMUX tree)
 #==============================================================================
-# The 3-level BUFGMUX tree (5-freq selection) can't be placed in adjacent
-# clock buffer slots. Allow non-dedicated routing for the cascade.
-# Jitter impact negligible at 5-100 MHz operating frequencies.
-set_property CLOCK_DEDICATED_ROUTE ANY_CMT_COLUMN [get_nets u_clk_gen/mux_01_out]
 
 #==============================================================================
 # IOB Register Packing
@@ -304,21 +300,24 @@ set_property CLOCK_DEDICATED_ROUTE ANY_CMT_COLUMN [get_nets u_clk_gen/mux_01_out
 # Strategy: false_path all MMCM inter-clock crossings. The only real CDC
 # (vec_clk edge detection in io_bank) is a 2-FF synchronizer.
 
-# All MMCM-generated clocks are mutually exclusive (only one selected at a time)
-set_clock_groups -logically_exclusive \
-    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT0]] \
-    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT1]] \
-    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT2]] \
-    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT3]] \
-    -group [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT4]]
+# clk_wiz MMCM outputs — CDC false paths between vec_clk and AXI/delay domains
+# Use Vivado's auto-generated clock names (clk_out1_clk_wiz_0, etc.)
+# The error BRAMs are dual-port (port A = vec_clk, port B = clk_fpga_0).
+# Config registers are quasi-static (written during setup, stable during execution).
 
-# AXI domain (clk_fpga_0) ↔ all MMCM clocks: config registers are quasi-static
-set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT*]]
-set_false_path -from [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT*]] -to [get_clocks clk_fpga_0]
+# vec_clk (clk_out1) ↔ AXI domain (clk_fpga_0): error BRAM CDC, quasi-static config
+set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks clk_out1_clk_wiz_0]
+set_false_path -from [get_clocks clk_out1_clk_wiz_0] -to [get_clocks clk_fpga_0]
 
-# delay_clk (clk_fpga_1) ↔ all MMCM clocks: vec_clk_d1 synchronizer handles CDC
-set_false_path -from [get_clocks clk_fpga_1] -to [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT*]]
-set_false_path -from [get_clocks -of_objects [get_pins u_clk_gen/u_mmcm/CLKOUT*]] -to [get_clocks clk_fpga_1]
+# vec_clk (clk_out1) ↔ delay domain (clk_fpga_1): io_cell pipeline synchronizer
+set_false_path -from [get_clocks clk_fpga_1] -to [get_clocks clk_out1_clk_wiz_0]
+set_false_path -from [get_clocks clk_out1_clk_wiz_0] -to [get_clocks clk_fpga_1]
+
+# All other clk_wiz outputs (clk_out2-7) ↔ PS clocks: fixed frequency, no runtime CDC
+set_false_path -from [get_clocks clk_fpga_0] -to [get_clocks clk_out2_clk_wiz_0]
+set_false_path -from [get_clocks clk_out2_clk_wiz_0] -to [get_clocks clk_fpga_0]
+set_false_path -from [get_clocks clk_fpga_1] -to [get_clocks clk_out2_clk_wiz_0]
+set_false_path -from [get_clocks clk_out2_clk_wiz_0] -to [get_clocks clk_fpga_1]
 
 # AXI ↔ delay_clk: io_config registers written from AXI, read from delay_clk.
 # Written during configuration only, stable during vector execution.

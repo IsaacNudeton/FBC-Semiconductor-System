@@ -142,6 +142,53 @@ wait_on_run $ip_run
 puts "PS7 IP generated successfully."
 puts "  Wrapper module: processing_system7_0"
 
+#==============================================================================
+# Step 4b: Create clk_wiz IP (replaces hand-rolled clk_ctrl + clk_gen)
+#==============================================================================
+# Sonoma uses clk_wiz at 0x43C30000 with DRP for runtime frequency changes.
+# Our hand-rolled clk_ctrl had an AXI runtime crash. This Xilinx IP is proven.
+#
+# Config: 100MHz input (FCLK_CLK0), 5 outputs (5/10/25/50/100 MHz)
+# AXI-Lite DRP interface for runtime reconfiguration
+#==============================================================================
+puts "\n>>> Step 4b: Creating clk_wiz IP..."
+
+create_ip -name clk_wiz -vendor xilinx.com -library ip \
+    -version 6.0 -module_name clk_wiz_0
+
+set_property -dict [list \
+    CONFIG.PRIM_IN_FREQ {100.000} \
+    CONFIG.USE_DYN_RECONFIG {true} \
+    CONFIG.INTERFACE_SELECTION {Enable_AXI} \
+    CONFIG.CLKOUT1_USED {true} \
+    CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {50.000} \
+    CONFIG.CLKOUT2_USED {true} \
+    CONFIG.CLKOUT2_REQUESTED_OUT_FREQ {100.000} \
+    CONFIG.CLKOUT3_USED {true} \
+    CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {25.000} \
+    CONFIG.CLKOUT4_USED {true} \
+    CONFIG.CLKOUT4_REQUESTED_OUT_FREQ {10.000} \
+    CONFIG.CLKOUT5_USED {true} \
+    CONFIG.CLKOUT5_REQUESTED_OUT_FREQ {5.000} \
+    CONFIG.CLKOUT6_USED {true} \
+    CONFIG.CLKOUT6_REQUESTED_OUT_FREQ {50.000} \
+    CONFIG.CLKOUT6_REQUESTED_PHASE {90.000} \
+    CONFIG.CLKOUT7_USED {true} \
+    CONFIG.CLKOUT7_REQUESTED_OUT_FREQ {50.000} \
+    CONFIG.CLKOUT7_REQUESTED_PHASE {180.000} \
+    CONFIG.USE_LOCKED {true} \
+    CONFIG.USE_RESET {true} \
+    CONFIG.RESET_TYPE {ACTIVE_LOW} \
+] [get_ips clk_wiz_0]
+
+generate_target all [get_ips clk_wiz_0]
+
+set clk_run [create_ip_run [get_ips clk_wiz_0]]
+launch_runs $clk_run -jobs 8
+wait_on_run $clk_run
+
+puts "clk_wiz IP generated successfully."
+
 update_compile_order -fileset sources_1
 
 #==============================================================================

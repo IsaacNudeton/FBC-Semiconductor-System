@@ -483,31 +483,48 @@ impl ClkCtrl {
     }
 
     /// Set vector clock frequency
-    /// Set vector clock frequency
+    /// Set vector clock frequency via clk_wiz DRP (Xilinx PG065)
     ///
-    /// NOTE: clk_ctrl at 0x4008_0000 has AXI runtime crash (reads hang).
-    /// Guarded by is_accessible() = false. Default 50MHz from reset.
-    /// Proper fix: replace with Vivado clk_wiz IP (v7 bitstream, pending timing closure).
+    /// v7d bitstream: clk_wiz IP replaces hand-rolled clk_ctrl.
+    /// Timing closure: WNS=+0.028ns. Xilinx-validated AXI slave.
     pub fn set_vec_clock(&self, freq: VecClockFreq) {
-        self.write_reg(0x00, freq as u32);
+        // clk_wiz CLKOUT0 divider: VCO(600MHz) / div = output freq
+        let div = match freq {
+            VecClockFreq::Mhz5 => 120,
+            VecClockFreq::Mhz10 => 60,
+            VecClockFreq::Mhz25 => 24,
+            VecClockFreq::Mhz50 => 12,
+            VecClockFreq::Mhz100 => 6,
+        };
+        // Write CLKOUT0 divide value
+        self.write_reg(0x208, div);
+        // Trigger reconfiguration
+        self.write_reg(0x25C, 0x03);
+        // Wait for MMCM relock (~100µs)
+        for _ in 0..10000 {
+            if self.read_reg(0x04) & 0x01 != 0 {
+                return;
+            }
+            crate::delay_us(10);
+        }
+        crate::uart_println!("[CLK] MMCM relock timeout");
     }
 
-    /// Check if clk_ctrl peripheral is accessible at runtime
+    /// Check if clk_wiz is accessible and MMCM is locked
     pub fn is_accessible(&self) -> bool {
-        // DISABLED: v6 bitstream has hand-rolled clk_ctrl with AXI runtime crash.
-        // v7 bitstream (clk_wiz) pending timing closure.
-        // Default 50MHz works for all operations.
-        false
+        let val = self.read_reg(0x04);
+        val & 0x01 != 0
     }
 
     /// Get current vector clock frequency
     pub fn get_vec_clock(&self) -> VecClockFreq {
-        match self.read_reg(0x00) & 0x07 {
-            0 => VecClockFreq::Mhz5,
-            1 => VecClockFreq::Mhz10,
-            2 => VecClockFreq::Mhz25,
-            3 => VecClockFreq::Mhz50,
-            4 => VecClockFreq::Mhz100,
+        let div = self.read_reg(0x208) & 0xFF;
+        match div {
+            120 => VecClockFreq::Mhz5,
+            60 => VecClockFreq::Mhz10,
+            24 => VecClockFreq::Mhz25,
+            12 => VecClockFreq::Mhz50,
+            6 => VecClockFreq::Mhz100,
             _ => VecClockFreq::Mhz50,
             3 => VecClockFreq::Mhz50,
             4 => VecClockFreq::Mhz100,

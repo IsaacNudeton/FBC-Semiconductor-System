@@ -155,8 +155,7 @@ module system_top (
     //=========================================================================
     // Internal Signals - Clock Control
     //=========================================================================
-    wire [2:0] freq_sel;    // From clk_ctrl AXI interface
-    wire bram_gate_n;       // From clk_ctrl: 0 during clock switch (gates error BRAMs)
+    // freq_sel and bram_gate_n removed — clk_wiz handles clock switching internally
 
     // Clock Control AXI-Lite (0x4008_0000)
     // dont_touch: Vivado optimizer incorrectly removes the MUX path for clk_ctrl
@@ -200,42 +199,43 @@ module system_top (
     wire        irq_freq;  // Frequency counter interrupt
 
     //=========================================================================
-    // Clock Generation (ONETWO: Pre-gen MUX approach)
+    // Clock Generation — Vivado clk_wiz IP (replaces hand-rolled clk_gen + clk_ctrl)
     //=========================================================================
-    // INVARIANT: 5 frequencies pre-generated (5/10/25/50/100 MHz)
-    // VARIES: Which frequency is selected via freq_sel
-    // BENEFIT: <100ns switch time vs 100µs for DRP PLL relock
-    clk_gen u_clk_gen (
-        .clk_100m       (clk_100m),
-        .clk_200m       (clk_200m),
-        .resetn         (ps_resetn),
+    // Sonoma uses clk_wiz with DRP at 0x43C30000. Our hand-rolled clk_ctrl
+    // had an AXI runtime crash that was never resolved. clk_wiz is Xilinx-validated.
+    //
+    // DRP mode: firmware writes MMCM divider registers via AXI-Lite to change
+    // clk_out1 frequency at runtime. ~100µs relock (vs our old <100ns BUFGMUX
+    // that didn't work).
+    //
+    // Outputs:
+    //   clk_out1: 50 MHz (default, runtime-changeable via DRP)  → vec_clk
+    //   clk_out2: 100 MHz (fixed)                                → pll_clk[1]
+    //   clk_out3: 25 MHz (fixed)                                 → spare
+    //   clk_out4: 10 MHz (fixed)                                 → pll_clk[3]
+    //   clk_out5: 5 MHz (fixed)                                  → spare
+    //   clk_out6: 50 MHz @ 90° (fixed)                           → vec_clk_90
+    //   clk_out7: 50 MHz @ 180° (fixed)                          → vec_clk_180
+    //=========================================================================
+    clk_wiz_0 u_clk_wiz (
+        // Input clock from PS
+        .clk_in1        (clk_100m),
 
-        .vec_clk        (vec_clk),
-        .vec_clk_90     (vec_clk_90),
-        .vec_clk_180    (vec_clk_180),
-        .delay_clk      (delay_clk),
+        // Output clocks
+        .clk_out1       (vec_clk),          // 50 MHz default, DRP-changeable
+        .clk_out2       (pll_clk[1]),       // 100 MHz fixed
+        .clk_out3       (),                 // 25 MHz spare
+        .clk_out4       (pll_clk[3]),       // 10 MHz fixed
+        .clk_out5       (),                 // 5 MHz spare
+        .clk_out6       (vec_clk_90),       // 50 MHz @ 90°
+        .clk_out7       (vec_clk_180),      // 50 MHz @ 180°
 
-        .vec_clk_en     (vec_clk_en),
         .locked         (clk_locked),
 
-        .freq_sel       (freq_sel),       // 0=5M, 1=10M, 2=25M, 3=50M, 4=100M
-
-        // Clock outputs for OBUFDS (to DUT)
-        .pll_clk        (pll_clk)         // 4 clock outputs
-    );
-
-    //=========================================================================
-    // Clock Control AXI Register Interface (0x4008_0000)
-    //=========================================================================
-    clk_ctrl #(
-        .AXI_ADDR_WIDTH(12),
-        .AXI_DATA_WIDTH(32)
-    ) u_clk_ctrl (
-        .clk            (clk_100m),
-        .resetn         (sys_resetn),
-
-        // AXI-Lite
-        .s_axi_awaddr   (axi_clk_awaddr),
+        // AXI-Lite DRP interface (0x4008_0000)
+        .s_axi_aclk     (clk_100m),
+        .s_axi_aresetn  (sys_resetn),
+        .s_axi_awaddr   (axi_clk_awaddr[10:0]),
         .s_axi_awvalid  (axi_clk_awvalid),
         .s_axi_awready  (axi_clk_awready),
         .s_axi_wdata    (axi_clk_wdata),
@@ -245,57 +245,41 @@ module system_top (
         .s_axi_bresp    (axi_clk_bresp),
         .s_axi_bvalid   (axi_clk_bvalid),
         .s_axi_bready   (axi_clk_bready),
-        .s_axi_araddr   (axi_clk_araddr),
+        .s_axi_araddr   (axi_clk_araddr[10:0]),
         .s_axi_arvalid  (axi_clk_arvalid),
         .s_axi_arready  (axi_clk_arready),
         .s_axi_rdata    (axi_clk_rdata),
         .s_axi_rresp    (axi_clk_rresp),
         .s_axi_rvalid   (axi_clk_rvalid),
-        .s_axi_rready   (axi_clk_rready),
-
-        // Clock Generator Interface
-        .freq_sel       (freq_sel),
-        .vec_clk_en     (vec_clk_en),
-        .mmcm_locked    (clk_locked),
-        .bram_gate_n    (bram_gate_n)
+        .s_axi_rready   (axi_clk_rready)
     );
 
+    // vec_clk_en: always enabled (clk_wiz handles gating internally)
+    assign vec_clk_en = 1'b1;
+    // bram_gate_n: always enabled (clk_wiz DRP handles clean transitions)
+    assign bram_gate_n = 1'b1;
+    // pll_clk[0]: variable frequency output (same as vec_clk)
+    assign pll_clk[0] = vec_clk;
+    // pll_clk[2]: same as pll_clk[0] for clock output buffer
+    assign pll_clk[2] = vec_clk;
+    // delay_clk: 200 MHz from PS (not from MMCM)
+    assign delay_clk = clk_200m;
+
     //=========================================================================
-    // Frequency Counter (0x4007_0000) - Measures DUT signal frequencies
+    // Frequency Counter (0x4007_0000) — REMOVED (Bug #17: never used by firmware)
+    // Was: axi_freq_counter at 0x4007_0000. Firmware never read from it.
+    // Removed to fix synthesis error and save resources.
+    // AXI address decode for freq_sel_w/freq_sel_rd still exists but
+    // returns default values (awready=1, rvalid=0) from the MUX defaults.
     //=========================================================================
-    axi_freq_counter #(
-        .AXI_ADDR_WIDTH(12),
-        .AXI_DATA_WIDTH(32),
-        .NUM_COUNTERS(4)
-    ) u_freq_counter (
-        .clk            (clk_100m),
-        .resetn         (sys_resetn),
-
-        // AXI-Lite
-        .s_axi_awaddr   (axi_freq_awaddr),
-        .s_axi_awvalid  (axi_freq_awvalid),
-        .s_axi_awready  (axi_freq_awready),
-        .s_axi_wdata    (axi_freq_wdata),
-        .s_axi_wstrb    (axi_freq_wstrb),
-        .s_axi_wvalid   (axi_freq_wvalid),
-        .s_axi_wready   (axi_freq_wready),
-        .s_axi_bresp    (axi_freq_bresp),
-        .s_axi_bvalid   (axi_freq_bvalid),
-        .s_axi_bready   (axi_freq_bready),
-        .s_axi_araddr   (axi_freq_araddr),
-        .s_axi_arvalid  (axi_freq_arvalid),
-        .s_axi_arready  (axi_freq_arready),
-        .s_axi_rdata    (axi_freq_rdata),
-        .s_axi_rresp    (axi_freq_rresp),
-        .s_axi_rvalid   (axi_freq_rvalid),
-        .s_axi_rready   (axi_freq_rready),
-
-        // Signal inputs (directly from pins - all 160 pins available)
-        .all_inputs     (pin_din),
-
-        // Interrupt
-        .irq            (irq_freq)
-    );
+    assign axi_freq_awready = 1'b1;
+    assign axi_freq_wready  = 1'b1;
+    assign axi_freq_bresp   = 2'b00;
+    assign axi_freq_bvalid  = 1'b0;
+    assign axi_freq_arready = 1'b1;
+    assign axi_freq_rdata   = 32'h0;
+    assign axi_freq_rresp   = 2'b00;
+    assign axi_freq_rvalid  = 1'b0;
 
     //=========================================================================
     // FBC Core (execution engine)
