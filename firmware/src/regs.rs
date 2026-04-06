@@ -526,9 +526,6 @@ impl ClkCtrl {
             12 => VecClockFreq::Mhz50,
             6 => VecClockFreq::Mhz100,
             _ => VecClockFreq::Mhz50,
-            3 => VecClockFreq::Mhz50,
-            4 => VecClockFreq::Mhz100,
-            _ => VecClockFreq::Mhz50,
         }
     }
 
