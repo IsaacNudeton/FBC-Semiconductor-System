@@ -18,6 +18,10 @@ path = "src/bin/cli.rs"
 name = "fbc-vec"
 path = "src/bin/fvec.rs"
 
+[[bin]]
+name = "fbc-repl"
+path = "src/bin/repl.rs"
+
 [dependencies]
 # Raw Ethernet (Layer 2)
 pnet = "0.35"
@@ -52,6 +56,9 @@ futures = "0.3"
 
 # MAC address parsing
 macaddr = "1.0"
+
+# Interactive REPL
+rustyline = "14"
 
 [dev-dependencies]
 tokio-test = "0.4"

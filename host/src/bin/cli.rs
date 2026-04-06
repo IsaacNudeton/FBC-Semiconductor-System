@@ -352,6 +352,43 @@ enum FbcCommands {
         mac: String,
     },
 
+    /// Generate a BIM EEPROM image (256 bytes)
+    GenBim {
+        /// Output file path
+        #[arg(short, long, default_value = "bim.bin")]
+        output: PathBuf,
+        /// Project code (e.g., CAL-RB, S0026)
+        #[arg(long)]
+        project: String,
+        /// Asset ID (e.g., CAL-01, BIM-042)
+        #[arg(long, default_value = "")]
+        asset: String,
+        /// Serial number
+        #[arg(long, default_value = "1")]
+        serial: u32,
+        /// BIM type (0=unknown, 1=normandy, 2=syros, 3=aurora, 4=iliad)
+        #[arg(long, default_value = "0")]
+        bim_type: u8,
+        /// HW revision
+        #[arg(long, default_value = "1")]
+        hw_rev: u8,
+        /// Max voltage per core in mV
+        #[arg(long, default_value = "1200")]
+        max_mv: u16,
+        /// Min voltage per core in mV
+        #[arg(long, default_value = "100")]
+        min_mv: u16,
+        /// Max current per core in mA
+        #[arg(long, default_value = "3000")]
+        max_ma: u16,
+        /// Number of VICOR cores (1-6)
+        #[arg(long, default_value = "6")]
+        cores: u8,
+        /// Thermal setpoint in 0.1°C (e.g., 1250 = 125.0°C)
+        #[arg(long, default_value = "250")]
+        temp_dc: i16,
+    },
+
     /// Record all packets from a board to a binary datalog file
     Record {
         /// Board MAC address
@@ -1534,6 +1571,78 @@ fn run_fbc_command(interface: &str, cmd: FbcCommands, json: bool) -> anyhow::Res
                 println!("{} — SD card repair complete: {}", format_mac(&mac), health.label());
             } else {
                 println!("{} — SD card repair FAILED: {}", format_mac(&mac), health.label());
+            }
+        }
+
+        FbcCommands::GenBim { output, project, asset, serial, bim_type, hw_rev, max_mv, min_mv, max_ma, cores, temp_dc } => {
+            let mut buf = [0u8; 256];
+
+            // Header (16 bytes)
+            buf[0..4].copy_from_slice(&0xBEEFCAFEu32.to_le_bytes());
+            buf[4] = 2; // version
+            buf[5] = bim_type;
+            buf[6] = hw_rev;
+            buf[8..12].copy_from_slice(&serial.to_le_bytes());
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as u32;
+            buf[12..16].copy_from_slice(&now.to_le_bytes());
+
+            // Rails (128 bytes at offset 16, 8 bytes each)
+            let core_count = cores.min(6) as usize;
+            for i in 0..core_count {
+                let off = 16 + i * 8;
+                buf[off] = (i + 1) as u8;     // channel_id
+                buf[off + 1] = 0x03;           // flags: HCPS + monitored
+                buf[off + 2..off + 4].copy_from_slice(&max_mv.to_le_bytes());
+                buf[off + 4..off + 6].copy_from_slice(&min_mv.to_le_bytes());
+                buf[off + 6..off + 8].copy_from_slice(&max_ma.to_le_bytes());
+            }
+            for i in core_count..16 {
+                let off = 16 + i * 8;
+                buf[off] = 0xFF; // disabled
+            }
+
+            // Project code (8 bytes at offset 0xD0)
+            let proj_bytes = project.as_bytes();
+            let len = proj_bytes.len().min(8);
+            buf[0xD0..0xD0 + len].copy_from_slice(&proj_bytes[..len]);
+
+            // BIM number (2 bytes at offset 0xD8)
+            buf[0xD8..0xDA].copy_from_slice(&1u16.to_le_bytes());
+
+            // Thermal (6 bytes at offset 0xDA)
+            buf[0xDA..0xDC].copy_from_slice(&temp_dc.to_le_bytes());
+            buf[0xDC] = 0;    // NTC 30K
+            buf[0xDD] = 0;    // air cooling
+            buf[0xDE] = 0xFF; // heater pin unknown
+            buf[0xDF] = 0xFF; // cooler pin unknown
+
+            // Asset ID (6 bytes at offset 0xE2)
+            let asset_bytes = asset.as_bytes();
+            let alen = asset_bytes.len().min(6);
+            if alen > 0 {
+                buf[0xE2..0xE2 + alen].copy_from_slice(&asset_bytes[..alen]);
+            }
+
+            // CRC32 at offset 0xF8 over bytes 0-247
+            let crc = crc32fast::hash(&buf[..248]);
+            buf[0xF8..0xFC].copy_from_slice(&crc.to_le_bytes());
+
+            std::fs::write(&output, &buf)
+                .map_err(|e| anyhow::anyhow!("Failed to write BIM image: {}", e))?;
+
+            if json {
+                println!(r#"{{"status":"ok","file":"{}","project":"{}","serial":{},"crc":"0x{:08X}"}}"#,
+                    output.display(), project, serial, crc);
+            } else {
+                println!("BIM image: {}", output.display());
+                println!("  Project:  {}", project);
+                if !asset.is_empty() { println!("  Asset:    {}", asset); }
+                println!("  Serial:   0x{:08X}", serial);
+                println!("  Type:     {}", bim_type);
+                println!("  Rails:    {} cores, {}-{}mV, {}mA max", core_count, min_mv, max_mv, max_ma);
+                println!("  Thermal:  {}.{}°C setpoint", temp_dc / 10, (temp_dc % 10).unsigned_abs());
+                println!("  CRC32:    0x{:08X}", crc);
             }
         }
 
