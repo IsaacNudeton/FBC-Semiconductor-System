@@ -52,7 +52,7 @@ serialport = "4.3"
 # ═══════════════════════════════════════════════════════════════
 
 # SSH client (russh — pure Rust, async)
-russh = "0.42"
+russh = "0.60"
 russh-keys = "0.42"
 async-trait = "0.1"
 
